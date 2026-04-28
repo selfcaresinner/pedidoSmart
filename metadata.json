@@ -1,6 +1,8 @@
 {
-  "name": "",
-  "description": "",
-  "requestFramePermissions": [],
+  "name": "SolidBit Delivery",
+  "description": "App de delivery local con tracking en tiempo real.",
+  "requestFramePermissions": [
+    "geolocation"
+  ],
   "majorCapabilities": []
 }

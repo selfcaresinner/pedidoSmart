@@ -30,7 +30,7 @@ func LoadConfig() *Config {
 		DatabaseURL: getEnvOrPanic("DATABASE_URL"),
 		Port:        getEnvOrDefault("PORT", "8080"),
 		Environment: getEnvOrDefault("ENVIRONMENT", "development"),
-		MapsAPIKey:  getEnvOrPanic("MAPS_API_KEY"),
+		MapsAPIKey:  getEnvOrPanic("NEXT_PUBLIC_MAPS_API_KEY"),
 	}
 
 	return cfg

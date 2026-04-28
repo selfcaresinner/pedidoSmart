@@ -4,6 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { Phone, MapPin, Package, CheckCircle2, Navigation, CircleDot, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { GoogleMap, useLoadScript, Marker, Polyline } from '@react-google-maps/api';
 
 // Tipos basados en nuestro schema.sql
 type OrderStatus = 'pending' | 'assigned' | 'picked_up' | 'delivered' | 'cancelled';
@@ -22,6 +23,10 @@ interface Order {
   // o utilizar un helper en el schema, para simplificar visualizaremos los pedidos devueltos.
 }
 
+// Valores por defecto para el mapa
+const DefaultMerchantLoc = { lat: 27.9678, lng: -110.8988 }; // Empalme/Guaymas reference
+const DefaultCustomerLoc = { lat: 27.9712, lng: -110.8931 };
+
 interface Driver {
   id: string;
   name: string;
@@ -32,6 +37,52 @@ export default function DashboardPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [driverStatus, setDriverStatus] = useState<DriverStatus>('offline');
   const [loading, setLoading] = useState(true);
+  const [driverLocation, setDriverLocation] = useState<{lat: number, lng: number} | null>(null);
+
+  const { isLoaded } = useLoadScript({
+    googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || '',
+  });
+
+  // GPS Tracking Loop
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+
+    if (orders.length > 0 && navigator.geolocation) {
+      interval = setInterval(() => {
+        navigator.geolocation.getCurrentPosition(
+          async (position) => {
+            const { latitude, longitude } = position.coords;
+            setDriverLocation({ lat: latitude, lng: longitude });
+
+            try {
+              const activeOrder = orders.find(o => o.status === 'picked_up' || o.status === 'assigned');
+              if (activeOrder) {
+                // Update track history
+                await supabase.from('tracking_history').insert({
+                  order_id: activeOrder.id,
+                  driver_id: activeOrder.driver_id,
+                  location: `POINT(${longitude} ${latitude})`
+                });
+
+                // Update current location in driver profile
+                await supabase.from('drivers')
+                  .update({ current_location: `POINT(${longitude} ${latitude})`, updated_at: new Date().toISOString() })
+                  .eq('id', activeOrder.driver_id);
+              }
+            } catch (err) {
+              console.error("[SolidBit] Geoloc error syncing:", err);
+            }
+          },
+          (err) => console.error("GPS Error:", err),
+          { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        );
+      }, 30000); // 30 seconds
+    }
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [orders]);
 
   useEffect(() => {
     // 1. Obtener estado inicial
@@ -192,6 +243,8 @@ export default function DashboardPage() {
                 <OrderCard 
                   key={order.id} 
                   order={order} 
+                  isLoadedMap={isLoaded}
+                  driverLocation={driverLocation}
                   onStatusUpdate={() => updateOrderStatus(order.id, order.status)} 
                 />
               ))}
@@ -204,7 +257,7 @@ export default function DashboardPage() {
 }
 
 // Subcomponente de la Carta de Pedido
-function OrderCard({ order, onStatusUpdate }: { order: Order; onStatusUpdate: () => void }) {
+function OrderCard({ order, isLoadedMap, driverLocation, onStatusUpdate }: { order: Order; isLoadedMap: boolean; driverLocation: {lat: number, lng: number} | null; onStatusUpdate: () => void }) {
   const isAssigned = order.status === 'assigned';
   const isPickedUp = order.status === 'picked_up';
 
@@ -257,6 +310,26 @@ function OrderCard({ order, onStatusUpdate }: { order: Order; onStatusUpdate: ()
                 <p className="text-xs text-gray-500 leading-relaxed mt-0.5">Pendiente de geocodificación final de coordenadas en tabla para mostrar domicilio.</p>
              </div>
           </div>
+          
+          {/* Mapa Interactivo Google Maps */}
+          {isLoadedMap && (
+             <div className="w-full h-48 mt-4 rounded-xl overflow-hidden bg-gray-100 border border-gray-200">
+               <GoogleMap
+                 mapContainerStyle={{ width: '100%', height: '100%' }}
+                 center={DefaultMerchantLoc}
+                 zoom={14}
+                 options={{ disableDefaultUI: true, gestureHandling: 'cooperative' }}
+               >
+                 <Marker position={DefaultMerchantLoc} label="M" title="Restaurante" />
+                 <Marker position={DefaultCustomerLoc} label="C" title="Cliente" />
+                 {driverLocation && <Marker position={driverLocation} label="Yo" icon={{ path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: "#4f46e5", fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />}
+                 <Polyline 
+                    path={[DefaultMerchantLoc, DefaultCustomerLoc]} 
+                    options={{ strokeColor: '#4f46e5', strokeOpacity: 0.8, strokeWeight: 4 }} 
+                 />
+               </GoogleMap>
+             </div>
+          )}
         </div>
 
         {/* Botonera de Acción */}
