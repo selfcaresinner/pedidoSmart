@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"solidbit/pkg/core"
+	"solidbit/pkg/dispatch"
 	"solidbit/pkg/ingestion"
 )
 
@@ -35,8 +36,17 @@ func main() {
 	workerPool.Start(ctx)
 	log.Println("[SolidBit WorkerPool] Escucha concurrente inicializada (Max: 20 goroutines)")
 
-	// 3. Montura de Controlador HTTP
-	service := ingestion.NewIngestionService(workerPool, aiParser)
+	// 3. Montaje Base de datos Transaccional y Dispatcher
+	db, err := core.NewDBWrapper(ctx, cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("No se pudo afianzar conexión persistente con Base de Datos: %v", err)
+	}
+	defer db.Close()
+
+	dispatcher := dispatch.NewDispatcher(db, workerPool)
+
+	// 4. Montura de Controlador HTTP
+	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
 
 	// 4. Servidor HTTP Asíncrono

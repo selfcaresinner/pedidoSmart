@@ -3,10 +3,12 @@ package ingestion
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 
 	"solidbit/pkg/core"
+	"solidbit/pkg/dispatch"
 )
 
 // MetaWebhook payload simplificado para extraer mensajes de WhatsApp Business API.
@@ -27,14 +29,18 @@ type MetaWebhook struct {
 
 // IngestionService coordina el Webhook, el Parseo mediante IA y la concurrencia segura del Worker Pool.
 type IngestionService struct {
-	pool   *core.WorkerPool
-	parser *AIParser
+	pool       *core.WorkerPool
+	parser     *AIParser
+	db         *core.DBWrapper
+	dispatcher *dispatch.Dispatcher
 }
 
-func NewIngestionService(pool *core.WorkerPool, parser *AIParser) *IngestionService {
+func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher) *IngestionService {
 	return &IngestionService{
-		pool:   pool,
-		parser: parser,
+		pool:       pool,
+		parser:     parser,
+		db:         db,
+		dispatcher: dispatcher,
 	}
 }
 
@@ -85,13 +91,41 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 
 	orderData, err := s.parser.ParseOrderText(ctx, texto)
 	if err != nil {
-		// Encapsulando según Estándar "Errors as Values"
-		return err 
+		return fmt.Errorf("error de extracción NLP mediante Gemini: %w", err)
 	}
 
-	// Posteriormente: Se conectará la respuesta de este log a DBWrapper (Supabase) + Push Notifications al Repartidor.
 	log.Printf("[Ingestion EXITO] -> Producto: %s | Qty: %d | Zona: %s",
 		orderData.Producto, orderData.Cantidad, orderData.DireccionAproximada)
+
+	// Lógica segura de Base de Datos
+	// Extraemos temporalmente un Merchant para respetar la foreign key.
+	var merchantID string
+	err = s.db.Pool.QueryRow(ctx, "SELECT id FROM merchants LIMIT 1").Scan(&merchantID)
+	if err != nil {
+		log.Println("[Ingestion WARN] Tabla merchants vacía. Se salta el flujo de guardado y despacho de la db.")
+		return nil
+	}
+
+	var orderID string
+	insertQuery := `
+		INSERT INTO orders (merchant_id, customer_name, customer_phone, delivery_location)
+		VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography)
+		RETURNING id
+	`
+	
+	// Temporal Mock de coordenadas hasta iterar el API de Google Maps Geocoding
+	testLon := -77.02824
+	testLat := -12.04318
+
+	err = s.db.Pool.QueryRow(ctx, insertQuery, merchantID, "Client IA", numEnvio, testLon, testLat).Scan(&orderID)
+	if err != nil {
+		return fmt.Errorf("fallo la persistencia del pedido: %w", err)
+	}
+
+	log.Printf("[Ingestion OK] Persistiendo Pedido UUID -> %s", orderID)
+
+	// Activación Asíncrona (Background Pool) del Motor Geográfico PostGIS
+	s.dispatcher.DispatchAsynchronous(orderID, testLon, testLat)
 
 	return nil
 }
