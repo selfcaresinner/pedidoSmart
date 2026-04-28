@@ -10,10 +10,12 @@ import (
 
 // Config contiene los valores validados de las variables de entorno para usar en el ecosistema SolidBit.
 type Config struct {
-	DatabaseURL string
-	Port        string
-	Environment string
-	MapsAPIKey  string
+	DatabaseURL     string
+	Port            string
+	Environment     string
+	MapsAPIKey      string
+	StripeSecretKey string
+	AppURL          string
 }
 
 // LoadConfig lee las variables de entorno, de '.env', de inyecciones del sistema (Docker/K8s/Railway) y valida las claves críticas.
@@ -27,10 +29,12 @@ func LoadConfig() *Config {
 
 	// Consolidación de variables validadas y predeterminadas (Fallbacks).
 	cfg := &Config{
-		DatabaseURL: getEnvOrPanic("DATABASE_URL"),
-		Port:        getEnvOrDefault("PORT", "8080"),
-		Environment: getEnvOrDefault("ENVIRONMENT", "development"),
-		MapsAPIKey:  getEnvOrPanic("NEXT_PUBLIC_MAPS_API_KEY"),
+		DatabaseURL:     getEnvOrPanic("DATABASE_URL"),
+		Port:            getEnvOrDefault("PORT", "8080"),
+		Environment:     getEnvOrDefault("ENVIRONMENT", "development"),
+		MapsAPIKey:      getEnvOrPanic("NEXT_PUBLIC_MAPS_API_KEY"),
+		StripeSecretKey: getEnvOrPanic("STRIPE_SECRET_KEY"),
+		AppURL:          getEnvOrPanic("APP_URL"),
 	}
 
 	return cfg

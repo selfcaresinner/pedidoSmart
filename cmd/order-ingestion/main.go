@@ -12,6 +12,7 @@ import (
 	"solidbit/pkg/dispatch"
 	"solidbit/pkg/geocoding"
 	"solidbit/pkg/ingestion"
+	"solidbit/pkg/payments"
 )
 
 func main() {
@@ -29,6 +30,8 @@ func main() {
 	aiParser := ingestion.NewAIParser(geminiApiKey)
 
 	geocoder := geocoding.NewClient(cfg.MapsAPIKey)
+
+	paymentsClient := payments.NewStripeClient(cfg.StripeSecretKey, cfg.AppURL)
 
 	// 2. Patrón de Resiliencia y Control de Tráfico RAM/CPU
 	// 20 workers simultáneos (protege de ban en API gratuita IA) , Buffer de 1000 requests.
@@ -49,7 +52,7 @@ func main() {
 	dispatcher := dispatch.NewDispatcher(db, workerPool)
 
 	// 4. Montura de Controlador HTTP
-	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder)
+	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
 
 	// 4. Servidor HTTP Asíncrono

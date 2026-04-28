@@ -18,14 +18,37 @@ interface Order {
   customer_name: string;
   customer_phone: string;
   created_at: string;
-  // Solo la usaremos mockeada acá visualmente o con los datos geográficos guardados
-  // Note: Si queremos obtener datos geográficos crudos postgis, se debería hacer un RPC temporal
-  // o utilizar un helper en el schema, para simplificar visualizaremos los pedidos devueltos.
+  delivery_location?: any;
+  payment_method?: 'cash' | 'transfer' | 'stripe';
+  payment_status?: 'pending' | 'paid' | 'failed';
+  stripe_link_url?: string;
 }
 
 // Valores por defecto para el mapa
 const DefaultMerchantLoc = { lat: 27.9678, lng: -110.8988 }; // Empalme/Guaymas reference
 const DefaultCustomerLoc = { lat: 27.9712, lng: -110.8931 };
+
+const parsePoint = (geo: any) => {
+  if (!geo) return { lat: 27.9667, lng: -110.8167 }; // Fallback centro si no hay data
+  
+  // Si Supabase devuelve un objeto con coordenadas (lon, lat)
+  if (typeof geo === 'object' && geo.coordinates) {
+    return { lat: geo.coordinates[1], lng: geo.coordinates[0] };
+  }
+
+  // Si devuelve una cadena tipo "POINT(-110.8167 27.9667)"
+  if (typeof geo === 'string') {
+    const match = geo.match(/POINT\(([^ ]+) ([^ ]+)\)/);
+    if (match) {
+      return { 
+        lat: parseFloat(match[2]), 
+        lng: parseFloat(match[1]) 
+      };
+    }
+  }
+
+  return { lat: 27.9667, lng: -110.8167 };
+};
 
 interface Driver {
   id: string;
@@ -261,6 +284,8 @@ function OrderCard({ order, isLoadedMap, driverLocation, onStatusUpdate }: { ord
   const isAssigned = order.status === 'assigned';
   const isPickedUp = order.status === 'picked_up';
 
+  const customerLoc = parsePoint(order.delivery_location);
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 15 }}
@@ -299,6 +324,22 @@ function OrderCard({ order, isLoadedMap, driverLocation, onStatusUpdate }: { ord
           </a>
         </div>
 
+        {/* Indicador de Pago */}
+        <div className="mb-4">
+            {order.payment_status === 'paid' ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-100 text-emerald-700">
+                   <CheckCircle2 className="w-3.5 h-3.5" /> Pagado
+                </span>
+            ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-amber-100 text-amber-700">
+                   <Clock className="w-3.5 h-3.5" /> Pendiente de Pago
+                </span>
+            )}
+            {order.payment_method === 'stripe' && order.stripe_link_url && (
+                <span className="ml-2 text-xs text-gray-500 font-medium">Vía Stripe</span>
+            )}
+        </div>
+
         <div className="space-y-3 mt-4">
           <div className="flex gap-3">
              <div className="mt-0.5 text-gray-400">
@@ -321,10 +362,10 @@ function OrderCard({ order, isLoadedMap, driverLocation, onStatusUpdate }: { ord
                  options={{ disableDefaultUI: true, gestureHandling: 'cooperative' }}
                >
                  <Marker position={DefaultMerchantLoc} label="M" title="Restaurante" />
-                 <Marker position={DefaultCustomerLoc} label="C" title="Cliente" />
+                 <Marker position={customerLoc} label="C" title="Cliente" />
                  {driverLocation && <Marker position={driverLocation} label="Yo" icon={{ path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: "#4f46e5", fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />}
                  <Polyline 
-                    path={[DefaultMerchantLoc, DefaultCustomerLoc]} 
+                    path={[DefaultMerchantLoc, customerLoc]} 
                     options={{ strokeColor: '#4f46e5', strokeOpacity: 0.8, strokeWeight: 4 }} 
                  />
                </GoogleMap>

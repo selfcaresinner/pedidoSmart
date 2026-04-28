@@ -10,6 +10,7 @@ import (
 	"solidbit/pkg/core"
 	"solidbit/pkg/dispatch"
 	"solidbit/pkg/geocoding"
+	"solidbit/pkg/payments"
 )
 
 // MetaWebhook payload simplificado para extraer mensajes de WhatsApp Business API.
@@ -35,15 +36,17 @@ type IngestionService struct {
 	db         *core.DBWrapper
 	dispatcher *dispatch.Dispatcher
 	geocoder   *geocoding.Client
+	payments   *payments.StripeClient
 }
 
-func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client) *IngestionService {
+func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, paymentsClient *payments.StripeClient) *IngestionService {
 	return &IngestionService{
 		pool:       pool,
 		parser:     parser,
 		db:         db,
 		dispatcher: dispatcher,
 		geocoder:   geocoder,
+		payments:   paymentsClient,
 	}
 }
 
@@ -123,8 +126,8 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 
 	var orderID string
 	insertQuery := `
-		INSERT INTO orders (merchant_id, customer_name, customer_phone, delivery_location)
-		VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography)
+		INSERT INTO orders (merchant_id, customer_name, customer_phone, delivery_location, payment_method, payment_status)
+		VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, 'stripe', 'pending')
 		RETURNING id
 	`
 
@@ -134,6 +137,21 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 	}
 
 	log.Printf("[Ingestion OK] Persistiendo Pedido UUID -> %s", orderID)
+
+	// Crear Link de Pago de Stripe
+	// Asumimos un monto dummy de $150.00 MXN para el ejemplo
+	amountCents := int64(15000)
+	stripeLink, err := s.payments.CreatePaymentLink(ctx, orderID, amountCents)
+	if err != nil {
+		log.Printf("[Pagos WARN] No se pudo generar url de pago para Pedido [%s]: %v", orderID, err)
+	} else {
+		log.Printf("[Pagos] Link creado para Pedido [%s]: %s", orderID, stripeLink)
+		// Actualizar la orden con el link
+		_, err = s.db.Pool.Exec(ctx, "UPDATE orders SET stripe_link_url = $1 WHERE id = $2", stripeLink, orderID)
+		if err != nil {
+			log.Printf("[Pagos WARN] No se guardo link de stripe en la DB para Pedido [%s]: %v", orderID, err)
+		}
+	}
 
 	// Activación Asíncrona (Background Pool) del Motor Geográfico PostGIS
 	s.dispatcher.DispatchAsynchronous(orderID, lon, lat)

@@ -33,6 +33,12 @@ CREATE TABLE drivers (
 -- Enumeración: Estados de un Pedido
 CREATE TYPE order_status AS ENUM ('pending', 'assigned', 'picked_up', 'delivered', 'cancelled');
 
+-- Enumeración: Métodos de Pago
+CREATE TYPE payment_method AS ENUM ('cash', 'transfer', 'stripe');
+
+-- Enumeración: Estados de Pago
+CREATE TYPE payment_status AS ENUM ('pending', 'paid', 'failed');
+
 -- Tabla: Orders (Pedidos)
 CREATE TABLE orders (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -42,6 +48,9 @@ CREATE TABLE orders (
     customer_name TEXT NOT NULL,
     customer_phone TEXT,
     delivery_location geography(POINT, 4326) NOT NULL, -- Punto de entrega del cliente
+    payment_method payment_method DEFAULT 'cash',
+    payment_status payment_status DEFAULT 'pending',
+    stripe_link_url TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
