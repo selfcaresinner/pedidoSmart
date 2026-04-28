@@ -51,6 +51,7 @@ CREATE TABLE orders (
     payment_method payment_method DEFAULT 'cash',
     payment_status payment_status DEFAULT 'pending',
     stripe_link_url TEXT,
+    total_amount NUMERIC(10, 2) DEFAULT 0.00,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -177,3 +178,17 @@ ON merchants FOR SELECT
 USING (
     id IN (SELECT merchant_id FROM orders WHERE driver_id IN (SELECT id FROM drivers WHERE user_id = auth.uid()))
 );
+
+
+-- =========================================================================
+-- 5. VISTAS ANALÍTICAS (BUSINESS INTELLIGENCE)
+-- =========================================================================
+
+-- Vista: admin_metrics
+-- Provee agregados de información crítica de la torre de control en tiempo real.
+CREATE OR REPLACE VIEW admin_metrics AS
+SELECT
+    (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'stripe' AND payment_status = 'paid') AS total_stripe,
+    (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'cash' AND status IN ('delivered')) AS total_cash,
+    (SELECT COUNT(*) FROM orders WHERE status = 'delivered' AND DATE(updated_at) = CURRENT_DATE) AS delivered_today;
+

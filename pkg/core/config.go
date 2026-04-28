@@ -17,6 +17,7 @@ type Config struct {
 	StripeSecretKey     string
 	StripeWebhookSecret string
 	AppURL              string
+	AdminPassword       string
 }
 
 // LoadConfig lee las variables de entorno, de '.env', de inyecciones del sistema (Docker/K8s/Railway) y valida las claves críticas.
@@ -37,6 +38,7 @@ func LoadConfig() *Config {
 		StripeSecretKey:     getEnvOrPanic("STRIPE_SECRET_KEY"),
 		StripeWebhookSecret: getEnvOrPanic("STRIPE_WEBHOOK_SECRET"),
 		AppURL:              getEnvOrPanic("APP_URL"),
+		AdminPassword:       getEnvOrPanic("ADMIN_PASSWORD"),
 	}
 
 	return cfg

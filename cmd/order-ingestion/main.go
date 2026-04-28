@@ -13,6 +13,7 @@ import (
 	"solidbit/pkg/geocoding"
 	"solidbit/pkg/ingestion"
 	"solidbit/pkg/payments"
+	"solidbit/pkg/admin"
 )
 
 func main() {
@@ -57,6 +58,10 @@ func main() {
 
 	paymentsWebhook := payments.NewWebhookHandler(db, cfg.StripeWebhookSecret)
 	http.HandleFunc("/webhook/stripe", paymentsWebhook.HandleStripeWebhook)
+
+	adminService := admin.NewAdminService(db, cfg.AdminPassword)
+	http.HandleFunc("/admin/metrics", adminService.AuthMiddleware(adminService.GetGlobalMetrics))
+	http.HandleFunc("/admin/live-map", adminService.AuthMiddleware(adminService.GetActiveLiveMap))
 
 	// 4. Servidor HTTP Asíncrono
 	server := &http.Server{Addr: ":" + cfg.Port}
