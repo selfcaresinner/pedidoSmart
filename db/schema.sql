@@ -1,0 +1,170 @@
+-- =========================================================================
+-- SOLIDBIT DATACENTER: Esquema Base y Lógica Geoespacial (Supabase / PostGIS)
+-- =========================================================================
+
+-- Habilitar extensión PostGIS para cálculos geográficos (Requerido en Supabase)
+CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- =========================================================================
+-- 1. DEFINICIÓN DE ESTRUCTURAS DE DATOS (TABLAS Y TIPOS)
+-- =========================================================================
+
+-- Tabla: Merchants (Comerciantes/Restaurantes)
+CREATE TABLE merchants (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    location geography(POINT, 4326) NOT NULL, -- Coordenadas del local
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Enumeración: Estados de un Repartidor
+CREATE TYPE driver_status AS ENUM ('offline', 'available', 'busy');
+
+-- Tabla: Drivers (Repartidores)
+CREATE TABLE drivers (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES auth.users(id), -- Vinculado a Supabase Auth
+    name TEXT NOT NULL,
+    status driver_status DEFAULT 'offline',
+    current_location geography(POINT, 4326),  -- Última posición reportada
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Enumeración: Estados de un Pedido
+CREATE TYPE order_status AS ENUM ('pending', 'assigned', 'picked_up', 'delivered', 'cancelled');
+
+-- Tabla: Orders (Pedidos)
+CREATE TABLE orders (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    merchant_id UUID REFERENCES merchants(id) NOT NULL,
+    driver_id UUID REFERENCES drivers(id), -- Puede ser Nulo hasta que se asigne a un repartidor
+    status order_status DEFAULT 'pending',
+    customer_name TEXT NOT NULL,
+    customer_phone TEXT,
+    delivery_location geography(POINT, 4326) NOT NULL, -- Punto de entrega del cliente
+    created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Tabla: Tracking History (Registro de coordenadas temporal para optimización y soporte)
+CREATE TABLE tracking_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    order_id UUID REFERENCES orders(id) NOT NULL,
+    driver_id UUID REFERENCES drivers(id) NOT NULL,
+    location geography(POINT, 4326) NOT NULL,
+    recorded_at TIMESTAMPTZ DEFAULT now()
+);
+
+
+-- =========================================================================
+-- 2. ÍNDICES GEOGRÁFICOS (CRÍTICO PARA RENDIMIENTO)
+-- =========================================================================
+-- Utilizamos índices GiST (Generalized Search Tree) que permiten a Postgres
+-- hacer búsquedas de proximidad K-NN (K-Nearest Neighbors) ultrarrápidas.
+CREATE INDEX drivers_location_idx ON drivers USING GIST (current_location);
+CREATE INDEX merchants_location_idx ON merchants USING GIST (location);
+CREATE INDEX orders_delivery_location_idx ON orders USING GIST (delivery_location);
+CREATE INDEX tracking_history_location_idx ON tracking_history USING GIST (location);
+
+
+-- =========================================================================
+-- 3. GEO-LOGIC: MOTOR DE BUSQUEDA POSTGIS (Stored Procedure)
+-- =========================================================================
+-- Algoritmo para encontrar a los N repartidores más cercanos disponibles.
+-- Utiliza el operador `<->` nativo de PostGIS que interactúa directamente 
+-- con los índices GiST para velocidad de sub-milisegundo.
+
+CREATE OR REPLACE FUNCTION get_closest_available_drivers(
+    start_lon DOUBLE PRECISION,
+    start_lat DOUBLE PRECISION,
+    limit_count INT DEFAULT 5
+)
+RETURNS TABLE (
+    driver_id UUID,
+    driver_name TEXT,
+    distance_meters FLOAT
+) AS $$
+BEGIN
+    RETURN QUERY
+    SELECT 
+        d.id,
+        d.name,
+        -- Retorna métrica visible: Calcula distancia exacta en metros
+        ST_Distance(
+            d.current_location,
+            ST_SetSRID(ST_MakePoint(start_lon, start_lat), 4326)::geography
+        ) AS distance_meters
+    FROM 
+        drivers d
+    WHERE 
+        d.status = 'available' 
+        AND d.current_location IS NOT NULL
+    ORDER BY 
+        -- `<->` Es el operador de distancia KNN. Mucho más rápido que hacer un ORDER BY con ST_Distance.
+        d.current_location <-> ST_SetSRID(ST_MakePoint(start_lon, start_lat), 4326)::geography
+    LIMIT limit_count;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+
+-- =========================================================================
+-- 4. CAPA DE SEGURIDAD: ROW LEVEL SECURITY (RLS)
+-- =========================================================================
+-- Obligamos a que todas las consultas vía API a Supabase pasen por nuestros filtros de autorización.
+
+-- Habilitar RLS explícitamente en todas las tablas sensibles
+ALTER TABLE drivers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+ALTER TABLE merchants ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tracking_history ENABLE ROW LEVEL SECURITY;
+
+
+-- POLÍTICAS: REPARTIDORES (DRIVERS)
+-- Un repartidor solo puede acceder y actualizar su PERFIL (donde su usuario de Supabase Auth coincida).
+CREATE POLICY "Drivers access own profile"
+ON drivers FOR SELECT
+USING (auth.uid() = user_id);
+
+CREATE POLICY "Drivers manage own profile"
+ON drivers FOR UPDATE
+USING (auth.uid() = user_id);
+
+
+-- POLÍTICAS: PEDIDOS (ORDERS)
+-- "RLS para que un repartidor SOLO pueda ver los pedidos asignados a él."
+-- Se evalúa si el auth.uid() coincide con el user_id de la tabla drivers anidada al pedido.
+CREATE POLICY "Drivers view strictly assigned orders"
+ON orders FOR SELECT
+USING (
+    driver_id IN (SELECT id FROM drivers WHERE user_id = auth.uid())
+);
+
+CREATE POLICY "Drivers update strictly assigned orders status"
+ON orders FOR UPDATE
+USING (
+    driver_id IN (SELECT id FROM drivers WHERE user_id = auth.uid())
+);
+
+
+-- POLÍTICAS: HISTORIAL DE SEGUIMIENTO (TRACKING)
+CREATE POLICY "Drivers log track their assigned orders"
+ON tracking_history FOR INSERT
+WITH CHECK (
+    driver_id IN (SELECT id FROM drivers WHERE user_id = auth.uid())
+);
+
+CREATE POLICY "Drivers view own tracking data"
+ON tracking_history FOR SELECT
+USING (
+    driver_id IN (SELECT id FROM drivers WHERE user_id = auth.uid())
+);
+
+
+-- POLÍTICAS: COMERCIANTES (MERCHANTS) (Solo Lectura)
+-- Le permitimos a los repartidores ver la información de un restaurante SOLAMENTE si tienen
+-- un pedido en curso asigando hacia dicho restaurante.
+CREATE POLICY "Drivers see merchant context for active orders"
+ON merchants FOR SELECT
+USING (
+    id IN (SELECT merchant_id FROM orders WHERE driver_id IN (SELECT id FROM drivers WHERE user_id = auth.uid()))
+);
