@@ -14,8 +14,9 @@ type Config struct {
 	Port            string
 	Environment     string
 	MapsAPIKey      string
-	StripeSecretKey string
-	AppURL          string
+	StripeSecretKey     string
+	StripeWebhookSecret string
+	AppURL              string
 }
 
 // LoadConfig lee las variables de entorno, de '.env', de inyecciones del sistema (Docker/K8s/Railway) y valida las claves críticas.
@@ -33,8 +34,9 @@ func LoadConfig() *Config {
 		Port:            getEnvOrDefault("PORT", "8080"),
 		Environment:     getEnvOrDefault("ENVIRONMENT", "development"),
 		MapsAPIKey:      getEnvOrPanic("NEXT_PUBLIC_MAPS_API_KEY"),
-		StripeSecretKey: getEnvOrPanic("STRIPE_SECRET_KEY"),
-		AppURL:          getEnvOrPanic("APP_URL"),
+		StripeSecretKey:     getEnvOrPanic("STRIPE_SECRET_KEY"),
+		StripeWebhookSecret: getEnvOrPanic("STRIPE_WEBHOOK_SECRET"),
+		AppURL:              getEnvOrPanic("APP_URL"),
 	}
 
 	return cfg

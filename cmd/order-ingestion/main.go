@@ -51,9 +51,12 @@ func main() {
 
 	dispatcher := dispatch.NewDispatcher(db, workerPool)
 
-	// 4. Montura de Controlador HTTP
+	// 4. Montura de Controladores HTTP
 	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
+
+	paymentsWebhook := payments.NewWebhookHandler(db, cfg.StripeWebhookSecret)
+	http.HandleFunc("/webhook/stripe", paymentsWebhook.HandleStripeWebhook)
 
 	// 4. Servidor HTTP Asíncrono
 	server := &http.Server{Addr: ":" + cfg.Port}

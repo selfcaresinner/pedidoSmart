@@ -50,6 +50,9 @@ func (s *StripeClient) CreatePaymentLink(ctx context.Context, orderID string, am
 		SuccessURL: stripe.String(successURL),
 		CancelURL:  stripe.String(cancelURL),
 		ClientReferenceID: stripe.String(orderID),
+		Metadata: map[string]string{
+			"order_id": orderID,
+		},
 		Context: ctx, // Context passing to allow clean interruptions
 	}
 
