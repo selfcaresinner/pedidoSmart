@@ -9,6 +9,7 @@ import (
 
 	"solidbit/pkg/core"
 	"solidbit/pkg/dispatch"
+	"solidbit/pkg/geocoding"
 )
 
 // MetaWebhook payload simplificado para extraer mensajes de WhatsApp Business API.
@@ -33,14 +34,16 @@ type IngestionService struct {
 	parser     *AIParser
 	db         *core.DBWrapper
 	dispatcher *dispatch.Dispatcher
+	geocoder   *geocoding.Client
 }
 
-func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher) *IngestionService {
+func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client) *IngestionService {
 	return &IngestionService{
 		pool:       pool,
 		parser:     parser,
 		db:         db,
 		dispatcher: dispatcher,
+		geocoder:   geocoder,
 	}
 }
 
@@ -98,12 +101,24 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 		orderData.Producto, orderData.Cantidad, orderData.DireccionAproximada)
 
 	// Lógica segura de Base de Datos
-	// Extraemos temporalmente un Merchant para respetar la foreign key.
+	// Extraemos temporalmente un Merchant para respetar la foreign key e inyectar un fallback local.
 	var merchantID string
-	err = s.db.Pool.QueryRow(ctx, "SELECT id FROM merchants LIMIT 1").Scan(&merchantID)
+	var merchLon, merchLat float64
+	err = s.db.Pool.QueryRow(ctx, "SELECT id, ST_X(location::geometry), ST_Y(location::geometry) FROM merchants LIMIT 1").Scan(&merchantID, &merchLon, &merchLat)
 	if err != nil {
 		log.Println("[Ingestion WARN] Tabla merchants vacía. Se salta el flujo de guardado y despacho de la db.")
 		return nil
+	}
+
+	// Geocodificación Real
+	lat, lon, geoErr := s.geocoder.ResolveAddress(ctx, orderData.DireccionAproximada)
+	if geoErr != nil {
+		// Fallback: usar la ubicación del Merchant para no perder la venta
+		log.Printf("[Ingestion ERROR] Fallo al geocodificar '%s': %v. Haciendo fallback a ubicación de Merchant.", orderData.DireccionAproximada, geoErr)
+		lon = merchLon
+		lat = merchLat
+	} else {
+		log.Printf("[Ingestion GEO] Geocodificación Exitosa -> Lat: %.5f, Lon: %.5f", lat, lon)
 	}
 
 	var orderID string
@@ -112,12 +127,8 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 		VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography)
 		RETURNING id
 	`
-	
-	// Temporal Mock de coordenadas hasta iterar el API de Google Maps Geocoding
-	testLon := -77.02824
-	testLat := -12.04318
 
-	err = s.db.Pool.QueryRow(ctx, insertQuery, merchantID, "Client IA", numEnvio, testLon, testLat).Scan(&orderID)
+	err = s.db.Pool.QueryRow(ctx, insertQuery, merchantID, "Client IA", numEnvio, lon, lat).Scan(&orderID)
 	if err != nil {
 		return fmt.Errorf("fallo la persistencia del pedido: %w", err)
 	}
@@ -125,7 +136,7 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 	log.Printf("[Ingestion OK] Persistiendo Pedido UUID -> %s", orderID)
 
 	// Activación Asíncrona (Background Pool) del Motor Geográfico PostGIS
-	s.dispatcher.DispatchAsynchronous(orderID, testLon, testLat)
+	s.dispatcher.DispatchAsynchronous(orderID, lon, lat)
 
 	return nil
 }

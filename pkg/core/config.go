@@ -13,6 +13,7 @@ type Config struct {
 	DatabaseURL string
 	Port        string
 	Environment string
+	MapsAPIKey  string
 }
 
 // LoadConfig lee las variables de entorno, de '.env', de inyecciones del sistema (Docker/K8s/Railway) y valida las claves críticas.
@@ -29,6 +30,7 @@ func LoadConfig() *Config {
 		DatabaseURL: getEnvOrPanic("DATABASE_URL"),
 		Port:        getEnvOrDefault("PORT", "8080"),
 		Environment: getEnvOrDefault("ENVIRONMENT", "development"),
+		MapsAPIKey:  getEnvOrPanic("MAPS_API_KEY"),
 	}
 
 	return cfg
