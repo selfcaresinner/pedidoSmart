@@ -1,0 +1,29 @@
+# Dockerfile.backend
+# ---- Build Stage ----
+FROM golang:1.23-alpine AS builder
+
+WORKDIR /app
+
+# Optimizar caché de módulos instalando dependencias primero
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copiar el resto del código fuente
+COPY . .
+
+# Compilar binario de Go con optimizaciones, desactivando CGO para imagen estática
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -a -installsuffix cgo -o solidbit-backend ./cmd/order-ingestion
+
+# ---- Production Stage ----
+FROM alpine:latest
+
+WORKDIR /app
+
+# Instalar Certificados SSL para conexiones HTTPS salientes (Stripe, WhatsApp, Gemini, Maps)
+RUN apk --no-cache add ca-certificates
+
+# Copiar el binario desde el builder
+COPY --from=builder /app/solidbit-backend .
+
+# Comando de inicio
+CMD ["./solidbit-backend"]

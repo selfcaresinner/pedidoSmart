@@ -25,6 +25,7 @@ func main() {
 
 	// 1. Cargamos config + Fail-Fast standard
 	cfg := core.LoadConfig()
+	core.PreFlightCheck(cfg)
 
 	// Solicitud explícita para la IA
 	geminiApiKey := os.Getenv("GEMINI_API_KEY")

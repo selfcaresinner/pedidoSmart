@@ -1,0 +1,32 @@
+# Dockerfile.frontend
+# ---- Build Stage ----
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Archivos de dependencias
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Copiar el código fuente y construir
+COPY . .
+# En Next.js, asegúrate que las variables NEXT_PUBLIC_* estén dispuestas en deploy (builder o runner)
+RUN npm run build
+
+# ---- Production Stage ----
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV production
+
+# Solo copiamos el build final (.next) y los archivos estáticos (public)
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package.json ./package.json
+
+EXPOSE 3000
+
+# Iniciamos el entorno de producción de Next.js
+CMD ["npm", "run", "start"]

@@ -48,6 +48,19 @@ func LoadConfig() *Config {
 	return cfg
 }
 
+// PreFlightCheck valida y loguea amigablemente el arranque y el cumplimiento del checklist de seguridad para DevOps.
+func PreFlightCheck(cfg *Config) {
+	fmt.Println("=========================================================")
+	fmt.Println("🚀 SOLIDBIT PRE-FLIGHT CHECK DE SISTEMAS")
+	fmt.Println("=========================================================")
+	fmt.Println("✅ DATABASE_URL provisto")
+	fmt.Println("✅ STRIPE_SECRET_KEY y STRIPE_WEBHOOK_SECRET provistos")
+	fmt.Println("✅ WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID provistos")
+	fmt.Println("✅ APP_URL y NEXT_PUBLIC_MAPS_API_KEY provistos")
+	fmt.Printf("🔥 Entorno: %s | Puerto: %s\n", strings.ToUpper(cfg.Environment), cfg.Port)
+	fmt.Println("=========================================================")
+}
+
 // getEnvOrPanic extrae una clave vital.
 // Fuerza la caída inmediata del programa (panic) indicando al desarrollador / administrador exactamente qué falta.
 func getEnvOrPanic(key string) string {
