@@ -14,6 +14,7 @@ CREATE TABLE merchants (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,
     location geography(POINT, 4326) NOT NULL, -- Coordenadas del local
+    merchant_phone VARCHAR(50),
     created_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -47,6 +48,7 @@ CREATE TABLE orders (
     status order_status DEFAULT 'pending',
     customer_name TEXT NOT NULL,
     customer_phone TEXT,
+    items_description TEXT,
     delivery_location geography(POINT, 4326) NOT NULL, -- Punto de entrega del cliente
     payment_method payment_method DEFAULT 'cash',
     payment_status payment_status DEFAULT 'pending',
@@ -55,6 +57,7 @@ CREATE TABLE orders (
     price_breakdown JSONB,
     delivery_sequence_priority INT DEFAULT 0,
     proximity_notified BOOLEAN DEFAULT FALSE,
+    confirmed_by_merchant BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );

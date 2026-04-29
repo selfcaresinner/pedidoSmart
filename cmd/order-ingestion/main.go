@@ -62,8 +62,9 @@ func main() {
 	metaClient := messenger.NewMetaClient(cfg.WhatsAppAccessToken, cfg.WhatsAppPhoneNumberID)
 
 	// 4. Montura de Controladores HTTP
-	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient, routingClient, pricingEngine, metaClient)
+	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient, routingClient, pricingEngine, metaClient, cfg.AppURL)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
+	http.HandleFunc("/api/merchant/confirm", service.HandleMerchantConfirm)
 
 	paymentsWebhook := payments.NewWebhookHandler(db, cfg.StripeWebhookSecret)
 	http.HandleFunc("/webhook/stripe", paymentsWebhook.HandleStripeWebhook)

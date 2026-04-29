@@ -43,9 +43,10 @@ type IngestionService struct {
 	routing    *routing.RoutingClient
 	pricing    *pricing.PricingEngine
 	metaClient *messenger.MetaClient
+	appURL     string
 }
 
-func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, paymentsClient *payments.StripeClient, routingClient *routing.RoutingClient, pricingEngine *pricing.PricingEngine, metaClient *messenger.MetaClient) *IngestionService {
+func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, paymentsClient *payments.StripeClient, routingClient *routing.RoutingClient, pricingEngine *pricing.PricingEngine, metaClient *messenger.MetaClient, appURL string) *IngestionService {
 	return &IngestionService{
 		pool:       pool,
 		parser:     parser,
@@ -56,6 +57,7 @@ func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWra
 		routing:    routingClient,
 		pricing:    pricingEngine,
 		metaClient: metaClient,
+		appURL:     appURL,
 	}
 }
 
@@ -116,7 +118,8 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 	// Extraemos temporalmente un Merchant para respetar la foreign key e inyectar un fallback local.
 	var merchantID string
 	var merchLon, merchLat float64
-	err = s.db.Pool.QueryRow(ctx, "SELECT id, ST_X(location::geometry), ST_Y(location::geometry) FROM merchants LIMIT 1").Scan(&merchantID, &merchLon, &merchLat)
+	var merchantPhone string
+	err = s.db.Pool.QueryRow(ctx, "SELECT id, ST_X(location::geometry), ST_Y(location::geometry), coalesce(merchant_phone, '') FROM merchants LIMIT 1").Scan(&merchantID, &merchLon, &merchLat, &merchantPhone)
 	if err != nil {
 		log.Println("[Ingestion WARN] Tabla merchants vacía. Se salta el flujo de guardado y despacho de la db.")
 		return nil
@@ -134,13 +137,14 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 	}
 
 	var orderID string
+	itemsDesc := fmt.Sprintf("%dx %s", orderData.Cantidad, orderData.Producto)
 	insertQuery := `
-		INSERT INTO orders (merchant_id, customer_name, customer_phone, delivery_location, payment_method, payment_status)
-		VALUES ($1, $2, $3, ST_SetSRID(ST_MakePoint($4, $5), 4326)::geography, 'stripe', 'pending')
+		INSERT INTO orders (merchant_id, customer_name, customer_phone, items_description, delivery_location, payment_method, payment_status)
+		VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography, 'stripe', 'pending')
 		RETURNING id
 	`
 
-	err = s.db.Pool.QueryRow(ctx, insertQuery, merchantID, "Client IA", numEnvio, lon, lat).Scan(&orderID)
+	err = s.db.Pool.QueryRow(ctx, insertQuery, merchantID, "Client IA", numEnvio, itemsDesc, lon, lat).Scan(&orderID)
 	if err != nil {
 		return fmt.Errorf("fallo la persistencia del pedido: %w", err)
 	}
@@ -201,8 +205,66 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 		}()
 	}
 
-	// Activación Asíncrona (Background Pool) del Motor Geográfico PostGIS
-	s.dispatcher.DispatchAsynchronous(orderID, lon, lat)
+	// Enviar notificación al restaurante si tiene número
+	if merchantPhone != "" {
+		go func(phone, id string) {
+			merchantMsg := fmt.Sprintf("¡Nuevo pedido recibido! ID: %s. Revisa los detalles aquí: %s/merchant/%s", id, s.appURL, id)
+			if sendErr := s.metaClient.SendTextMessage(context.Background(), phone, merchantMsg); sendErr != nil {
+				log.Printf("[WhatsApp API OUTBOUND ERR] (Restaurante): %v", sendErr)
+			} else {
+				log.Printf("[WhatsApp API OUTBOUND] Notificación al restaurante %s enviada", phone)
+			}
+		}(merchantPhone, orderID)
+	}
 
 	return nil
+}
+
+func (s *IngestionService) HandleMerchantConfirm(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var reqBody struct {
+		OrderID string `json:"order_id"`
+		Action  string `json:"action"` // "accept" o "reject"
+	}
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	orderID := reqBody.OrderID
+
+	if reqBody.Action == "accept" {
+		var lon, lat float64
+		err := s.db.Pool.QueryRow(ctx, "UPDATE orders SET confirmed_by_merchant = TRUE, updated_at = now() WHERE id = $1 RETURNING ST_X(delivery_location::geometry), ST_Y(delivery_location::geometry)", orderID).Scan(&lon, &lat)
+		if err != nil {
+			log.Printf("[Merchant] Error confirmando orden %s: %v", orderID, err)
+			http.Error(w, "Error confirmando orden", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[Merchant] Orden %s confirmada. Despachando repartidor.", orderID)
+		
+		// Activación Asíncrona (Background Pool) del Motor Geográfico PostGIS
+		s.dispatcher.DispatchAsynchronous(orderID, lon, lat)
+		
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+
+	} else if reqBody.Action == "reject" {
+		_, err := s.db.Pool.Exec(ctx, "UPDATE orders SET status = 'cancelled', updated_at = now() WHERE id = $1", orderID)
+		if err != nil {
+			log.Printf("[Merchant] Error cancelando orden %s: %v", orderID, err)
+			http.Error(w, "Error cancelando orden", http.StatusInternalServerError)
+			return
+		}
+		log.Printf("[Merchant] Orden %s rechazada.", orderID)
+		
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]string{"status": "rejected"})
+	} else {
+		http.Error(w, "Action not found", http.StatusBadRequest)
+	}
 }
