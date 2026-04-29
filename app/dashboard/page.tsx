@@ -19,10 +19,16 @@ interface Order {
   customer_phone: string;
   created_at: string;
   delivery_location?: any;
-  payment_method?: 'cash' | 'transfer' | 'stripe';
+  payment_method?: 'cash' | 'transfer';
   payment_status?: 'pending' | 'paid' | 'failed';
-  stripe_link_url?: string;
+  total_amount: number;
   delivery_sequence_priority?: number;
+}
+
+interface Wallet {
+  driver_id: string;
+  cash_on_hand: number;
+  updated_at: string;
 }
 
 // Valores por defecto para el mapa
@@ -62,6 +68,7 @@ export default function DashboardPage() {
   const [accessCode, setAccessCode] = useState('');
   const [orders, setOrders] = useState<Order[]>([]);
   const [driverStatus, setDriverStatus] = useState<DriverStatus>('offline');
+  const [wallet, setWallet] = useState<Wallet | null>(null);
   const [loading, setLoading] = useState(true);
   const [driverLocation, setDriverLocation] = useState<{lat: number, lng: number} | null>(null);
   const [uploading, setUploading] = useState<string | null>(null); // orderId being uploaded
@@ -138,11 +145,25 @@ export default function DashboardPage() {
   const fetchInitialData = async () => {
     try {
       setLoading(true);
-      // Extraemos los pedidos asignados que aún están activos
+
+      // 1. Obtener el Driver ID (asociado al Auth actual)
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      const { data: driverData } = await supabase
+        .from('drivers')
+        .select('id, name, status')
+        .eq('user_id', user.id)
+        .single();
+      
+      if (!driverData) return;
+
+      // 2. Extraemos los pedidos asignados que aún están activos
       const { data: dbOrders, error: ordersError } = await supabase
         .from('orders')
         .select('*')
         .in('status', ['assigned', 'picked_up'])
+        .eq('driver_id', driverData.id)
         .order('created_at', { ascending: false });
 
       if (ordersError) throw ordersError;
@@ -151,15 +172,36 @@ export default function DashboardPage() {
         setOrders(dbOrders as Order[]);
       }
 
-      // Podríamos hacer fetch al driver usando el user id
-      // Mock estado disponible
-      setDriverStatus('available');
+      // 3. Obtener Cartera
+      const { data: walletData } = await supabase
+        .from('driver_wallets')
+        .select('*')
+        .eq('driver_id', driverData.id)
+        .single();
+      
+      setWallet(walletData as Wallet);
+      setDriverStatus(driverData.status as DriverStatus);
+
     } catch (error) {
       console.error("[SolidBit][UI] Error fetching init data:", error);
     } finally {
       setLoading(false);
     }
   };
+
+  // Update Tracking Info
+  useEffect(() => {
+    const walletChannel = supabase
+      .channel('driver:wallet')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_wallets' }, (payload) => {
+        setWallet(payload.new as Wallet);
+      })
+      .subscribe();
+    
+    return () => {
+      supabase.removeChannel(walletChannel);
+    };
+  }, []);
 
   const handleOrderChange = (payload: any) => {
     const newOrder = payload.new as Order;
@@ -332,7 +374,11 @@ export default function DashboardPage() {
       <header className="sticky top-0 z-20 bg-white shadow-sm border-b border-gray-100 flex items-center justify-between px-4 py-4">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-gray-950">SolidBit</h1>
-          <p className="text-xs text-gray-500 font-medium tracking-wide">PANEL DE DESPACHO</p>
+          {wallet && (
+              <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full mt-0.5">
+                  POR LIQUIDAR: ${wallet.cash_on_hand.toFixed(2)}
+              </div>
+          )}
         </div>
 
         {/* Badge Disponibilidad */}
@@ -453,18 +499,21 @@ function OrderCard({ order, isLoadedMap, driverLocation, fullRoute, isNextStop, 
         </div>
 
         {/* Indicador de Pago */}
-        <div className="mb-4">
-            {order.payment_status === 'paid' ? (
+        <div className="mb-4 flex flex-wrap gap-2">
+            {order.payment_method === 'cash' ? (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold bg-orange-100 text-orange-700">
+                   💵 COBRAR EN EFECTIVO: ${order.total_amount.toFixed(2)}
+                </span>
+            ) : (
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold bg-blue-100 text-blue-700">
+                   🏦 TRANSFERENCIA: ${order.total_amount.toFixed(2)}
+                </span>
+            )}
+
+            {order.payment_status === 'paid' && (
                 <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-100 text-emerald-700">
                    <CheckCircle2 className="w-3.5 h-3.5" /> Pagado
                 </span>
-            ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-amber-100 text-amber-700">
-                   <Clock className="w-3.5 h-3.5" /> Pendiente de Pago
-                </span>
-            )}
-            {order.payment_method === 'stripe' && order.stripe_link_url && (
-                <span className="ml-2 text-xs text-gray-500 font-medium">Vía Stripe</span>
             )}
         </div>
 

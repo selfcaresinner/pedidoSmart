@@ -18,10 +18,6 @@ Copia el archivo `.env.example` a uno nuevo llamado `.env` y completa los siguie
     *   Places API
     *   Distance Matrix API
 
-### 💳 Pagos (Stripe)
-*   **STRIPE_SECRET_KEY**: Se obtiene en el Dashboard de Stripe (Modo Test). Empieza con `sk_test_`.
-*   **STRIPE_WEBHOOK_SECRET**: En el Dashboard de Stripe, ve a *Developers > Webhooks*. Añade un endpoint apuntando a `https://tu-url.com/webhook/stripe` y copia el secreto `whsec_...`.
-
 ### 💬 WhatsApp (Meta Business)
 *   **WHATSAPP_ACCESS_TOKEN**: En [Meta for Developers](https://developers.facebook.com/), crea una App de tipo "Business", añade "WhatsApp" y obtén el Token de Acceso Permanente.
 *   **WHATSAPP_PHONE_NUMBER_ID**: Se encuentra en la configuración de WhatsApp dentro de tu App de Meta.
@@ -30,7 +26,7 @@ Copia el archivo `.env.example` a uno nuevo llamado `.env` y completa los siguie
 ### 🛡️ Seguridad y Soporte
 *   **ADMIN_PASSWORD**: Una clave inventada por ti para entrar al panel de administración.
 *   **NEXT_PUBLIC_SUPPORT_EMAIL**: Correo donde los clientes pedirán ayuda (ej: `ayuda@solidbit.app`).
-*   **NEXT_PUBLIC_BUSINESS_ADDRESS**: Dirección física legal requerida por Stripe.
+*   **NEXT_PUBLIC_BUSINESS_ADDRESS**: Dirección física legal requerida.
 
 ---
 
@@ -84,7 +80,7 @@ CREATE TABLE drivers (
 );
 
 CREATE TYPE order_status AS ENUM ('pending', 'assigned', 'picked_up', 'delivered', 'cancelled');
-CREATE TYPE payment_method AS ENUM ('cash', 'transfer', 'stripe');
+CREATE TYPE payment_method AS ENUM ('cash', 'transfer');
 CREATE TYPE payment_status AS ENUM ('pending', 'paid', 'failed');
 
 CREATE TABLE orders (
@@ -98,7 +94,6 @@ CREATE TABLE orders (
     delivery_location geography(POINT, 4326) NOT NULL,
     payment_method payment_method DEFAULT 'cash',
     payment_status payment_status DEFAULT 'pending',
-    stripe_link_url TEXT,
     total_amount NUMERIC(10, 2) DEFAULT 0.00,
     price_breakdown JSONB,
     delivery_sequence_priority INT DEFAULT 0,
@@ -106,6 +101,14 @@ CREATE TABLE orders (
     confirmed_by_merchant BOOLEAN DEFAULT FALSE,
     delivery_evidence_url TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Cartera de Efectivo (Para repartidores)
+CREATE TABLE driver_wallets (
+    driver_id UUID PRIMARY KEY REFERENCES drivers(id),
+    cash_on_hand NUMERIC(10, 2) DEFAULT 0.00,
+    last_liquidation_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -148,7 +151,7 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 -- 4. Vista para el Panel de Administración (KPIs)
 CREATE OR REPLACE VIEW admin_metrics AS
 SELECT
-    (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'stripe' AND payment_status = 'paid') AS total_stripe,
+    (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'transfer' AND payment_status = 'paid') AS total_transfers,
     (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'cash' AND status IN ('delivered')) AS total_cash,
     (SELECT COUNT(*) FROM orders WHERE status = 'delivered' AND DATE(updated_at) = CURRENT_DATE) AS delivered_today;
 ```

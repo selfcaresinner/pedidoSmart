@@ -10,7 +10,6 @@ import (
 	"solidbit/pkg/core"
 	"solidbit/pkg/dispatch"
 	"solidbit/pkg/geocoding"
-	"solidbit/pkg/payments"
 	"solidbit/pkg/pricing"
 	"solidbit/pkg/routing"
 	"solidbit/pkg/messenger"
@@ -39,21 +38,19 @@ type IngestionService struct {
 	db         *core.DBWrapper
 	dispatcher *dispatch.Dispatcher
 	geocoder   *geocoding.Client
-	payments   *payments.StripeClient
 	routing    *routing.RoutingClient
 	pricing    *pricing.PricingEngine
 	metaClient *messenger.MetaClient
 	appURL     string
 }
 
-func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, paymentsClient *payments.StripeClient, routingClient *routing.RoutingClient, pricingEngine *pricing.PricingEngine, metaClient *messenger.MetaClient, appURL string) *IngestionService {
+func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, routingClient *routing.RoutingClient, pricingEngine *pricing.PricingEngine, metaClient *messenger.MetaClient, appURL string) *IngestionService {
 	return &IngestionService{
 		pool:       pool,
 		parser:     parser,
 		db:         db,
 		dispatcher: dispatcher,
 		geocoder:   geocoder,
-		payments:   paymentsClient,
 		routing:    routingClient,
 		pricing:    pricingEngine,
 		metaClient: metaClient,
@@ -194,30 +191,21 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 
 	log.Printf("[Pricing] Pedido %s: Distancia %dm, Total Calculado: $%.2f MXN", orderID, distanceMeters, totalAmount)
 
-	// Crear Link de Pago de Stripe
-	stripeLink, err := s.payments.CreatePaymentLink(ctx, orderID, amountCents)
+	// Actualizar la orden con los importes
+	_, err = s.db.Pool.Exec(ctx, "UPDATE orders SET total_amount = $1, price_breakdown = $2 WHERE id = $3", totalAmount, breakdownJSON, orderID)
 	if err != nil {
-		log.Printf("[Pagos WARN] No se pudo generar url de pago para Pedido [%s]: %v", orderID, err)
-		// Solo actualizamos el total devuelto por Pricing
-		_, _ = s.db.Pool.Exec(ctx, "UPDATE orders SET total_amount = $1, price_breakdown = $2 WHERE id = $3", totalAmount, breakdownJSON, orderID)
-	} else {
-		log.Printf("[Pagos] Link creado para Pedido [%s]: %s", orderID, stripeLink)
-		// Actualizar la orden con el link y los importes
-		_, err = s.db.Pool.Exec(ctx, "UPDATE orders SET stripe_link_url = $1, total_amount = $2, price_breakdown = $3 WHERE id = $4", stripeLink, totalAmount, breakdownJSON, orderID)
-		if err != nil {
-			log.Printf("[Pagos WARN] No se guardo metadata en la DB para Pedido [%s]: %v", orderID, err)
-		}
-
-		// Enviar WhatsApp al cliente
-		go func() {
-			msg := fmt.Sprintf("¡Pedido confirmado! Puedes pagar aquí: %s", stripeLink)
-			if sendErr := s.metaClient.SendTextMessage(context.Background(), numEnvio, msg); sendErr != nil {
-				log.Printf("[WhatsApp API OUTBOUND ERR] %v", sendErr)
-			} else {
-				log.Printf("[WhatsApp API OUTBOUND] Link de pago enviado a %s", numEnvio)
-			}
-		}()
+		log.Printf("[Pricing WARN] No se guardo metadata en la DB para Pedido [%s]: %v", orderID, err)
 	}
+
+	// Enviar WhatsApp al cliente
+	go func() {
+		msg := fmt.Sprintf("✅ ¡Pedido confirmado! Total a pagar: $%.2f. El pago puede ser en efectivo al recibir o vía transferencia bancaria.", totalAmount)
+		if sendErr := s.metaClient.SendTextMessage(context.Background(), numEnvio, msg); sendErr != nil {
+			log.Printf("[WhatsApp API OUTBOUND ERR] %v", sendErr)
+		} else {
+			log.Printf("[WhatsApp API OUTBOUND] Confirmación de pedido enviada a %s", numEnvio)
+		}
+	}()
 
 	// Enviar notificación al restaurante si tiene número
 	if merchantPhone != "" {
@@ -304,17 +292,35 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 	
 	// Actualizar la orden con la url de evidencia y marcar como entregada
 	var customerPhone string
+	var totalAmount float64
+	var paymentMethod string
 	query := `
 		UPDATE orders 
 		SET status = 'delivered', delivery_evidence_url = $1, updated_at = now() 
 		WHERE id = $2 
-		RETURNING customer_phone
+		RETURNING customer_phone, total_amount, payment_method
 	`
-	err := s.db.Pool.QueryRow(ctx, query, reqBody.EvidenceURL, reqBody.OrderID).Scan(&customerPhone)
+	err := s.db.Pool.QueryRow(ctx, query, reqBody.EvidenceURL, reqBody.OrderID).Scan(&customerPhone, &totalAmount, &paymentMethod)
 	if err != nil {
 		log.Printf("[Driver] Error completando orden %s: %v", reqBody.OrderID, err)
 		http.Error(w, "Error completando orden", http.StatusInternalServerError)
 		return
+	}
+
+	// Si fue pago en efectivo, actualizar la cartera del repartidor
+	if paymentMethod == "cash" && reqBody.DriverID != "unknown" {
+		walletQuery := `
+			INSERT INTO driver_wallets (driver_id, cash_on_hand, updated_at)
+			VALUES ($1, $2, now())
+			ON CONFLICT (driver_id) 
+			DO UPDATE SET cash_on_hand = driver_wallets.cash_on_hand + $2, updated_at = now()
+		`
+		_, err := s.db.Pool.Exec(ctx, walletQuery, reqBody.DriverID, totalAmount)
+		if err != nil {
+			log.Printf("[Driver WALLET ERR] No se pudo actualizar cartera para driver %s: %v", reqBody.DriverID, err)
+		} else {
+			log.Printf("[Driver WALLET OK] Cartera de %s incrementada en $%.2f", reqBody.DriverID, totalAmount)
+		}
 	}
 
 	log.Printf("[Driver] Orden %s entregada por %s. Evidencia: %s", reqBody.OrderID, reqBody.DriverID, reqBody.EvidenceURL)

@@ -14,8 +14,6 @@ type Config struct {
 	Port            string
 	Environment     string
 	MapsAPIKey      string
-	StripeSecretKey     string
-	StripeWebhookSecret string
 	AppURL              string
 	AdminPassword       string
 	WhatsAppAccessToken   string
@@ -40,8 +38,6 @@ func LoadConfig() *Config {
 		Port:            getEnvOrDefault("PORT", "8080"),
 		Environment:     getEnvOrDefault("ENVIRONMENT", "development"),
 		MapsAPIKey:      getEnvOrPanic("NEXT_PUBLIC_MAPS_API_KEY"),
-		StripeSecretKey:     getEnvOrPanic("STRIPE_SECRET_KEY"),
-		StripeWebhookSecret: getEnvOrPanic("STRIPE_WEBHOOK_SECRET"),
 		AppURL:              getEnvOrPanic("APP_URL"),
 		AdminPassword:       getEnvOrPanic("ADMIN_PASSWORD"),
 		WhatsAppAccessToken:   getEnvOrPanic("WHATSAPP_ACCESS_TOKEN"),
@@ -60,7 +56,6 @@ func PreFlightCheck(cfg *Config) {
 	fmt.Println("🚀 SOLIDBIT PRE-FLIGHT CHECK DE SISTEMAS")
 	fmt.Println("=========================================================")
 	fmt.Println("✅ DATABASE_URL provisto")
-	fmt.Println("✅ STRIPE_SECRET_KEY y STRIPE_WEBHOOK_SECRET provistos")
 	fmt.Println("✅ WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID provistos")
 	fmt.Println("✅ APP_URL y NEXT_PUBLIC_MAPS_API_KEY provistos")
 	fmt.Println("✅ ADMIN_PHONE provisto")

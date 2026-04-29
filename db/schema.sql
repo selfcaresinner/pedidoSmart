@@ -35,7 +35,7 @@ CREATE TABLE drivers (
 CREATE TYPE order_status AS ENUM ('pending', 'assigned', 'picked_up', 'delivered', 'cancelled');
 
 -- Enumeración: Métodos de Pago
-CREATE TYPE payment_method AS ENUM ('cash', 'transfer', 'stripe');
+CREATE TYPE payment_method AS ENUM ('cash', 'transfer');
 
 -- Enumeración: Estados de Pago
 CREATE TYPE payment_status AS ENUM ('pending', 'paid', 'failed');
@@ -52,7 +52,6 @@ CREATE TABLE orders (
     delivery_location geography(POINT, 4326) NOT NULL, -- Punto de entrega del cliente
     payment_method payment_method DEFAULT 'cash',
     payment_status payment_status DEFAULT 'pending',
-    stripe_link_url TEXT,
     total_amount NUMERIC(10, 2) DEFAULT 0.00,
     price_breakdown JSONB,
     delivery_sequence_priority INT DEFAULT 0,
@@ -60,6 +59,14 @@ CREATE TABLE orders (
     confirmed_by_merchant BOOLEAN DEFAULT FALSE,
     delivery_evidence_url TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
+    updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- Tabla: Driver Wallets (Efectivo por Liquidar)
+CREATE TABLE driver_wallets (
+    driver_id UUID PRIMARY KEY REFERENCES drivers(id),
+    cash_on_hand NUMERIC(10, 2) DEFAULT 0.00,
+    last_liquidation_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
@@ -227,7 +234,7 @@ USING (
 -- Provee agregados de información crítica de la torre de control en tiempo real.
 CREATE OR REPLACE VIEW admin_metrics AS
 SELECT
-    (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'stripe' AND payment_status = 'paid') AS total_stripe,
+    (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'transfer' AND payment_status = 'paid') AS total_transfers,
     (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'cash' AND status IN ('delivered')) AS total_cash,
     (SELECT COUNT(*) FROM orders WHERE status = 'delivered' AND DATE(updated_at) = CURRENT_DATE) AS delivered_today;
 

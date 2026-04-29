@@ -13,7 +13,6 @@ import (
 	"solidbit/pkg/geocoding"
 	"solidbit/pkg/ingestion"
 	"solidbit/pkg/notifications"
-	"solidbit/pkg/payments"
 	"solidbit/pkg/admin"
 	"solidbit/pkg/routing"
 	"solidbit/pkg/pricing"
@@ -42,8 +41,6 @@ func main() {
 	aiParser := ingestion.NewAIParser(geminiApiKey, apiMonitor)
 
 	geocoder := geocoding.NewClient(cfg.MapsAPIKey, apiMonitor)
-
-	paymentsClient := payments.NewStripeClient(cfg.StripeSecretKey, cfg.AppURL, apiMonitor)
 
 	// 2. Patrón de Resiliencia y Control de Tráfico RAM/CPU
 	// 20 workers simultáneos (protege de ban en API gratuita IA) , Buffer de 1000 requests.
@@ -76,13 +73,10 @@ func main() {
 	healthMonitor := core.NewHealthMonitor(db, workerPool)
 	http.HandleFunc("/health", healthMonitor.HandleHealthCheck)
 	
-	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient, routingClient, pricingEngine, metaClient, cfg.AppURL)
+	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, routingClient, pricingEngine, metaClient, cfg.AppURL)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
 	http.HandleFunc("/api/merchant/confirm", service.HandleMerchantConfirm)
 	http.HandleFunc("/api/driver/complete", service.HandleDriverComplete)
-
-	paymentsWebhook := payments.NewWebhookHandler(db, cfg.StripeWebhookSecret)
-	http.HandleFunc("/webhook/stripe", paymentsWebhook.HandleStripeWebhook)
 
 	adminService := admin.NewAdminService(db, cfg.AdminPassword)
 	http.HandleFunc("/admin/metrics", adminService.AuthMiddleware(adminService.GetGlobalMetrics))
