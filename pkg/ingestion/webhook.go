@@ -282,3 +282,53 @@ func (s *IngestionService) HandleMerchantConfirm(w http.ResponseWriter, r *http.
 		http.Error(w, "Action not found", http.StatusBadRequest)
 	}
 }
+
+func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var reqBody struct {
+		OrderID          string `json:"order_id"`
+		EvidenceURL      string `json:"delivery_evidence_url"`
+		DriverID         string `json:"driver_id"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	
+	// Actualizar la orden con la url de evidencia y marcar como entregada
+	var customerPhone string
+	query := `
+		UPDATE orders 
+		SET status = 'delivered', delivery_evidence_url = $1, updated_at = now() 
+		WHERE id = $2 
+		RETURNING customer_phone
+	`
+	err := s.db.Pool.QueryRow(ctx, query, reqBody.EvidenceURL, reqBody.OrderID).Scan(&customerPhone)
+	if err != nil {
+		log.Printf("[Driver] Error completando orden %s: %v", reqBody.OrderID, err)
+		http.Error(w, "Error completando orden", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[Driver] Orden %s entregada por %s. Evidencia: %s", reqBody.OrderID, reqBody.DriverID, reqBody.EvidenceURL)
+
+	// Notificar al cliente vía WhatsApp
+	if customerPhone != "" {
+		go func(phone, evidenceURL string) {
+			msg := fmt.Sprintf("✅ ¡Tu pedido ha sido entregado! Puedes ver la evidencia fotográfica aquí: %s", evidenceURL)
+			if sendErr := s.metaClient.SendTextMessage(context.Background(), phone, msg); sendErr != nil {
+				log.Printf("[WhatsApp API OUTBOUND ERR] (Delivery Confirmation): %v", sendErr)
+			}
+		}(customerPhone, reqBody.EvidenceURL)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "delivered"})
+}

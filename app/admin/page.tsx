@@ -43,25 +43,6 @@ export default function AdminDashboardPage() {
     }
   };
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    fetchInitialData();
-
-    // Supabase Realtime para actualizar la info si cambia
-    // (Por ej, si se completa un pago o se entrega un pedido)
-    const channel = supabase
-      .channel('admin:changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
-        fetchInitialData();
-      })
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, [isAuthenticated]);
-
   const fetchInitialData = async () => {
     // Para simplificar, en lugar de llamar al backend de Go o lidiar con CORS si no corren en el mismo puerto,
     // usaremos peticiones directas a Supabase para la vista materializada y datos básicos como solicitaba SolidBit.
@@ -101,6 +82,25 @@ export default function AdminDashboardPage() {
       console.error(e);
     }
   };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    fetchInitialData();
+
+    // Supabase Realtime para actualizar la info si cambia
+    // (Por ej, si se completa un pago o se entrega un pedido)
+    const channel = supabase
+      .channel('admin:changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'orders' }, () => {
+        fetchInitialData();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isAuthenticated]);
 
   if (!isAuthenticated) {
     return (

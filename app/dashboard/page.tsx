@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Phone, MapPin, Package, CheckCircle2, Navigation, CircleDot, Clock, Lock } from 'lucide-react';
+import { Phone, MapPin, Package, CheckCircle2, Navigation, CircleDot, Clock, Lock, Camera, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleMap, useLoadScript, Marker, Polyline } from '@react-google-maps/api';
 
@@ -64,6 +64,9 @@ export default function DashboardPage() {
   const [driverStatus, setDriverStatus] = useState<DriverStatus>('offline');
   const [loading, setLoading] = useState(true);
   const [driverLocation, setDriverLocation] = useState<{lat: number, lng: number} | null>(null);
+  const [uploading, setUploading] = useState<string | null>(null); // orderId being uploaded
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [activeOrderId, setActiveOrderId] = useState<string | null>(null);
 
   const { isLoaded } = useLoadScript({
     googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || '',
@@ -132,29 +135,6 @@ export default function DashboardPage() {
     };
   }, [orders]);
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    // 1. Obtener estado inicial
-    fetchInitialData();
-
-    // 2. Suscribir a Realtime de Supabase (Escuchar INSERT y UPDATE)
-    const channel = supabase
-      .channel('public:orders')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'orders' },
-        (payload) => {
-          handleOrderChange(payload);
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
   const fetchInitialData = async () => {
     try {
       setLoading(true);
@@ -210,28 +190,81 @@ export default function DashboardPage() {
     });
   };
 
-  const updateOrderStatus = async (orderId: string, currentStatus: OrderStatus) => {
+  const updateOrderStatus = async (orderId: string, currentStatus: OrderStatus, evidenceUrl?: string) => {
     let nextStatus: OrderStatus = 'delivered';
     if (currentStatus === 'assigned') {
       nextStatus = 'picked_up';
     } else if (currentStatus === 'picked_up') {
+      if (!evidenceUrl) {
+          setActiveOrderId(orderId);
+          fileInputRef.current?.click();
+          return;
+      }
       nextStatus = 'delivered';
     } else {
       return; // No transitions
     }
 
     try {
-      const { error } = await supabase
-        .from('orders')
-        .update({ status: nextStatus, updated_at: new Date().toISOString() })
-        .eq('id', orderId);
+      if (nextStatus === 'delivered') {
+          // Si es entrega final, pasamos por el backend de Go para notificar WhatsApp
+          const res = await fetch('/api/driver/complete', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                  order_id: orderId, 
+                  delivery_evidence_url: evidenceUrl,
+                  driver_id: orders.find(o => o.id === orderId)?.driver_id || 'unknown'
+              })
+          });
+          if (!res.ok) throw new Error("Fallo al completar la orden en el backend");
+      } else {
+        const { error } = await supabase
+          .from('orders')
+          .update({ status: nextStatus, updated_at: new Date().toISOString() })
+          .eq('id', orderId);
 
-      if (error) throw error;
+        if (error) throw error;
+      }
       
       // Realtime escuchará el UPDATE y modificará la UI localmente.
     } catch (error) {
       console.error("[SolidBit][UI] Error updating order:", error);
-      alert("Hubo un error sincronizando con la base de datos.");
+      alert("Hubo un error sincronizando con el servidor.");
+    }
+  };
+
+  const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file || !activeOrderId) return;
+
+    setUploading(activeOrderId);
+    try {
+        const fileExt = file.name.split('.').pop();
+        const fileName = `${activeOrderId}.${fileExt}`;
+        const filePath = `evidence/${fileName}`;
+
+        // Upload to Supabase Storage (Bucket: delivery-evidence)
+        const { error: uploadError, data } = await supabase.storage
+            .from('delivery-evidence')
+            .upload(filePath, file, { upsert: true });
+
+        if (uploadError) throw uploadError;
+
+        // Get Public URL
+        const { data: { publicUrl } } = supabase.storage
+            .from('delivery-evidence')
+            .getPublicUrl(filePath);
+
+        // Finalize order with evidence URL
+        await updateOrderStatus(activeOrderId, 'picked_up', publicUrl);
+        
+    } catch (err: any) {
+        alert("Fallo al subir la foto: " + err.message);
+    } finally {
+        setUploading(null);
+        setActiveOrderId(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
     }
   };
 
@@ -240,6 +273,29 @@ export default function DashboardPage() {
     // MOCK: Aquí ejecutaría un update a la DB
     setDriverStatus(nextStatus);
   };
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+
+    // 1. Obtener estado inicial
+    fetchInitialData();
+
+    // 2. Suscribir a Realtime de Supabase (Escuchar INSERT y UPDATE)
+    const channel = supabase
+      .channel('public:orders')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        (payload) => {
+          handleOrderChange(payload);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isAuthenticated]);
 
   if (!isAuthenticated) {
     return (
@@ -324,18 +380,29 @@ export default function DashboardPage() {
                   fullRoute={[DefaultMerchantLoc, ...arr.map(o => parsePoint(o.delivery_location))]}
                   isNextStop={index === 0 && arr.length > 1}
                   onStatusUpdate={() => updateOrderStatus(order.id, order.status)} 
+                  uploading={uploading === order.id}
                 />
               ))}
             </AnimatePresence>
           </div>
         )}
       </main>
+
+      {/* Hidden File Input for Capture */}
+      <input 
+        type="file" 
+        ref={fileInputRef} 
+        onChange={handleFileUpload} 
+        accept="image/*" 
+        capture="environment" 
+        className="hidden" 
+      />
     </div>
   );
 }
 
 // Subcomponente de la Carta de Pedido
-function OrderCard({ order, isLoadedMap, driverLocation, fullRoute, isNextStop, onStatusUpdate }: { order: Order; isLoadedMap: boolean; driverLocation: {lat: number, lng: number} | null; fullRoute: {lat:number, lng:number}[]; isNextStop: boolean; onStatusUpdate: () => void }) {
+function OrderCard({ order, isLoadedMap, driverLocation, fullRoute, isNextStop, onStatusUpdate, uploading }: { order: Order; isLoadedMap: boolean; driverLocation: {lat: number, lng: number} | null; fullRoute: {lat:number, lng:number}[]; isNextStop: boolean; onStatusUpdate: () => void; uploading: boolean }) {
   const isAssigned = order.status === 'assigned';
   const isPickedUp = order.status === 'picked_up';
 
@@ -437,22 +504,29 @@ function OrderCard({ order, isLoadedMap, driverLocation, fullRoute, isNextStop, 
         <div className="mt-5 pt-4 border-t border-gray-50">
           <button
             onClick={onStatusUpdate}
+            disabled={uploading}
             className={`w-full py-3 px-4 rounded-xl font-bold text-sm tracking-wide transition-all shadow-sm flex items-center justify-center gap-2
               ${isAssigned 
                 ? 'bg-orange-500 hover:bg-orange-600 text-white' 
                 : 'bg-indigo-600 hover:bg-indigo-700 text-white'
               }
+              ${uploading ? 'opacity-70 cursor-not-allowed' : ''}
             `}
           >
-            {isAssigned ? (
+            {uploading ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  SUBIENDO EVIDENCIA...
+                </>
+            ) : isAssigned ? (
               <>
                 <CheckCircle2 className="w-5 h-5" />
                 CONFIRMAR RECOLECCIÓN
               </>
             ) : (
               <>
-                <Navigation className="w-5 h-5 fill-current" />
-                ENTREGAR PEDIDO
+                <Camera className="w-5 h-5" />
+                TOMAR FOTO Y ENTREGAR
               </>
             )}
           </button>

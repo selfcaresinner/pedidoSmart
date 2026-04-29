@@ -79,6 +79,7 @@ func main() {
 	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient, routingClient, pricingEngine, metaClient, cfg.AppURL)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
 	http.HandleFunc("/api/merchant/confirm", service.HandleMerchantConfirm)
+	http.HandleFunc("/api/driver/complete", service.HandleDriverComplete)
 
 	paymentsWebhook := payments.NewWebhookHandler(db, cfg.StripeWebhookSecret)
 	http.HandleFunc("/webhook/stripe", paymentsWebhook.HandleStripeWebhook)

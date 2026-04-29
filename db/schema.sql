@@ -58,6 +58,7 @@ CREATE TABLE orders (
     delivery_sequence_priority INT DEFAULT 0,
     proximity_notified BOOLEAN DEFAULT FALSE,
     confirmed_by_merchant BOOLEAN DEFAULT FALSE,
+    delivery_evidence_url TEXT,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
