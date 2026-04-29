@@ -199,7 +199,7 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 
 	// Enviar WhatsApp al cliente
 	go func() {
-		msg := fmt.Sprintf("✅ ¡Pedido confirmado! Total a pagar: $%.2f. El pago puede ser en efectivo al recibir o vía transferencia bancaria.", totalAmount)
+		msg := fmt.Sprintf("✅ ¡Pedido recibido! Total a pagar: $%.2f. Un repartidor ha sido asignado y va en camino a recoger tu pedido.", totalAmount)
 		if sendErr := s.metaClient.SendTextMessage(context.Background(), numEnvio, msg); sendErr != nil {
 			log.Printf("[WhatsApp API OUTBOUND ERR] %v", sendErr)
 		} else {
@@ -207,68 +207,11 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 		}
 	}()
 
-	// Enviar notificación al restaurante si tiene número
-	if merchantPhone != "" {
-		go func(phone, id string) {
-			merchantMsg := fmt.Sprintf("¡Nuevo pedido recibido! ID: %s. Revisa los detalles aquí: %s/merchant/%s", id, s.appURL, id)
-			if sendErr := s.metaClient.SendTextMessage(context.Background(), phone, merchantMsg); sendErr != nil {
-				log.Printf("[WhatsApp API OUTBOUND ERR] (Restaurante): %v", sendErr)
-			} else {
-				log.Printf("[WhatsApp API OUTBOUND] Notificación al restaurante %s enviada", phone)
-			}
-		}(merchantPhone, orderID)
-	}
+	// Activación Asíncrona (Background Pool) del Motor Geográfico PostGIS
+	log.Printf("[Ingestion] Despachando repartidor automáticamente para orden %s", orderID)
+	s.dispatcher.DispatchAsynchronous(orderID, lon, lat)
 
 	return nil
-}
-
-func (s *IngestionService) HandleMerchantConfirm(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	var reqBody struct {
-		OrderID string `json:"order_id"`
-		Action  string `json:"action"` // "accept" o "reject"
-	}
-	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
-		http.Error(w, "Invalid body", http.StatusBadRequest)
-		return
-	}
-
-	ctx := r.Context()
-	orderID := reqBody.OrderID
-
-	if reqBody.Action == "accept" {
-		var lon, lat float64
-		err := s.db.Pool.QueryRow(ctx, "UPDATE orders SET confirmed_by_merchant = TRUE, updated_at = now() WHERE id = $1 RETURNING ST_X(delivery_location::geometry), ST_Y(delivery_location::geometry)", orderID).Scan(&lon, &lat)
-		if err != nil {
-			log.Printf("[Merchant] Error confirmando orden %s: %v", orderID, err)
-			http.Error(w, "Error confirmando orden", http.StatusInternalServerError)
-			return
-		}
-		log.Printf("[Merchant] Orden %s confirmada. Despachando repartidor.", orderID)
-		
-		// Activación Asíncrona (Background Pool) del Motor Geográfico PostGIS
-		s.dispatcher.DispatchAsynchronous(orderID, lon, lat)
-		
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
-
-	} else if reqBody.Action == "reject" {
-		_, err := s.db.Pool.Exec(ctx, "UPDATE orders SET status = 'cancelled', updated_at = now() WHERE id = $1", orderID)
-		if err != nil {
-			log.Printf("[Merchant] Error cancelando orden %s: %v", orderID, err)
-			http.Error(w, "Error cancelando orden", http.StatusInternalServerError)
-			return
-		}
-		log.Printf("[Merchant] Orden %s rechazada.", orderID)
-		
-		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "rejected"})
-	} else {
-		http.Error(w, "Action not found", http.StatusBadRequest)
-	}
 }
 
 func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.Request) {
