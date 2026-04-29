@@ -21,7 +21,7 @@ export default function RootLayout({children}: {children: React.ReactNode}) {
               <a href="/legal/privacy" className="hover:text-indigo-600 transition-colors">Privacidad</a>
               <a href="/legal/refunds" className="hover:text-indigo-600 transition-colors">Reembolsos</a>
             </div>
-            <p>Guaymas, Sonora, México</p>
+            <p>{process.env.NEXT_PUBLIC_BUSINESS_ADDRESS || 'Guaymas, Sonora, México'}</p>
           </div>
         </footer>
       </body>

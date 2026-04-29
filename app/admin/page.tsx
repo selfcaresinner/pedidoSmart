@@ -86,7 +86,10 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     if (!isAuthenticated) return;
 
-    fetchInitialData();
+    const init = async () => {
+      await fetchInitialData();
+    };
+    init();
 
     // Supabase Realtime para actualizar la info si cambia
     // (Por ej, si se completa un pago o se entrega un pedido)

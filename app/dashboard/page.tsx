@@ -79,7 +79,7 @@ export default function DashboardPage() {
     const savedCode = localStorage.getItem('solidbit_driver_auth');
     
     if (urlDriverId || savedCode === process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
-      setIsAuthenticated(true);
+      setTimeout(() => setIsAuthenticated(true), 0);
     }
   }, []);
 
@@ -278,7 +278,10 @@ export default function DashboardPage() {
     if (!isAuthenticated) return;
 
     // 1. Obtener estado inicial
-    fetchInitialData();
+    const init = async () => {
+       await fetchInitialData();
+    };
+    init();
 
     // 2. Suscribir a Realtime de Supabase (Escuchar INSERT y UPDATE)
     const channel = supabase

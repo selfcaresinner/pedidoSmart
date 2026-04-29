@@ -45,7 +45,7 @@ export default function OrderSuccessPage() {
                  </div>
                  <div>
                     <h4 className="text-sm font-bold text-gray-900">Soporte y Reclamaciones</h4>
-                    <p className="text-sm text-gray-500">soporte@solidbit.app</p>
+                    <p className="text-sm text-gray-500">{process.env.NEXT_PUBLIC_SUPPORT_EMAIL || 'soporte@solidbit.app'}</p>
                  </div>
               </div>
 
@@ -56,7 +56,7 @@ export default function OrderSuccessPage() {
                  <div>
                     <h4 className="text-sm font-bold text-gray-900">Dirección Fiscal</h4>
                     <p className="text-sm text-gray-500 leading-tight">
-                      Av. Tecnológico 100, Guaymas, Sonora, CP 85400, México.
+                      {process.env.NEXT_PUBLIC_BUSINESS_ADDRESS || 'Av. Tecnológico 100, Guaymas, Sonora, CP 85400, México.'}
                     </p>
                  </div>
               </div>
