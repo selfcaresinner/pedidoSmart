@@ -14,6 +14,8 @@ import (
 	"solidbit/pkg/ingestion"
 	"solidbit/pkg/payments"
 	"solidbit/pkg/admin"
+	"solidbit/pkg/routing"
+	"solidbit/pkg/pricing"
 )
 
 func main() {
@@ -50,10 +52,13 @@ func main() {
 	}
 	defer db.Close()
 
-	dispatcher := dispatch.NewDispatcher(db, workerPool)
+	routingClient := routing.NewRoutingClient(cfg.MapsAPIKey)
+
+	dispatcher := dispatch.NewDispatcher(db, workerPool, routingClient)
+	pricingEngine := pricing.NewPricingEngine()
 
 	// 4. Montura de Controladores HTTP
-	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient)
+	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient, routingClient, pricingEngine)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
 
 	paymentsWebhook := payments.NewWebhookHandler(db, cfg.StripeWebhookSecret)

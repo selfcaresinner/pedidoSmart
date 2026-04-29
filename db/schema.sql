@@ -52,6 +52,8 @@ CREATE TABLE orders (
     payment_status payment_status DEFAULT 'pending',
     stripe_link_url TEXT,
     total_amount NUMERIC(10, 2) DEFAULT 0.00,
+    price_breakdown JSONB,
+    delivery_sequence_priority INT DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -76,6 +78,21 @@ CREATE INDEX merchants_location_idx ON merchants USING GIST (location);
 CREATE INDEX orders_delivery_location_idx ON orders USING GIST (delivery_location);
 CREATE INDEX tracking_history_location_idx ON tracking_history USING GIST (location);
 
+-- Trigger: Reseteo de prioridad al entregar
+CREATE OR REPLACE FUNCTION reset_sequence_priority()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.status = 'delivered' THEN
+        NEW.delivery_sequence_priority = 0;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER reset_sequence_priority_trigger
+BEFORE UPDATE ON orders
+FOR EACH ROW
+EXECUTE FUNCTION reset_sequence_priority();
 
 -- =========================================================================
 -- 3. GEO-LOGIC: MOTOR DE BUSQUEDA POSTGIS (Stored Procedure)

@@ -22,6 +22,7 @@ interface Order {
   payment_method?: 'cash' | 'transfer' | 'stripe';
   payment_status?: 'pending' | 'paid' | 'failed';
   stripe_link_url?: string;
+  delivery_sequence_priority?: number;
 }
 
 // Valores por defecto para el mapa
@@ -262,12 +263,14 @@ export default function DashboardPage() {
         ) : (
           <div className="space-y-4">
             <AnimatePresence>
-              {orders.map((order) => (
+              {[...orders].sort((a, b) => (a.delivery_sequence_priority || 999) - (b.delivery_sequence_priority || 999)).map((order, index, arr) => (
                 <OrderCard 
                   key={order.id} 
                   order={order} 
                   isLoadedMap={isLoaded}
                   driverLocation={driverLocation}
+                  fullRoute={[DefaultMerchantLoc, ...arr.map(o => parsePoint(o.delivery_location))]}
+                  isNextStop={index === 0 && arr.length > 1}
                   onStatusUpdate={() => updateOrderStatus(order.id, order.status)} 
                 />
               ))}
@@ -280,7 +283,7 @@ export default function DashboardPage() {
 }
 
 // Subcomponente de la Carta de Pedido
-function OrderCard({ order, isLoadedMap, driverLocation, onStatusUpdate }: { order: Order; isLoadedMap: boolean; driverLocation: {lat: number, lng: number} | null; onStatusUpdate: () => void }) {
+function OrderCard({ order, isLoadedMap, driverLocation, fullRoute, isNextStop, onStatusUpdate }: { order: Order; isLoadedMap: boolean; driverLocation: {lat: number, lng: number} | null; fullRoute: {lat:number, lng:number}[]; isNextStop: boolean; onStatusUpdate: () => void }) {
   const isAssigned = order.status === 'assigned';
   const isPickedUp = order.status === 'picked_up';
 
@@ -302,12 +305,15 @@ function OrderCard({ order, isLoadedMap, driverLocation, onStatusUpdate }: { ord
       `} />
 
       <div className="p-5 pl-6">
-        <div className="flex justify-between items-start mb-3">
+          <div className="flex justify-between items-start mb-3">
           <div>
-            <div className={`text-xs font-bold tracking-wider mb-1 uppercase
+            <div className={`text-xs font-bold tracking-wider mb-1 uppercase flex items-center gap-2
                 ${isAssigned ? 'text-orange-600' : 'text-indigo-600'}
               `}>
               {isAssigned ? 'Recién Asignado' : 'En Tránsito'}
+              {isNextStop && (
+                <span className="ml-2 bg-indigo-600 text-white px-2 py-0.5 rounded-full text-[10px] shadow-sm animate-pulse">Siguiente Parada</span>
+              )}
             </div>
             <h3 className="text-lg font-bold text-gray-900 border-b border-gray-100 pb-2 mb-2 inline-flex gap-2 items-center">
                <Package className="w-4 h-4 text-gray-500" />
@@ -362,10 +368,12 @@ function OrderCard({ order, isLoadedMap, driverLocation, onStatusUpdate }: { ord
                  options={{ disableDefaultUI: true, gestureHandling: 'cooperative' }}
                >
                  <Marker position={DefaultMerchantLoc} label="M" title="Restaurante" />
-                 <Marker position={customerLoc} label="C" title="Cliente" />
+                 {fullRoute.slice(1).map((loc, i) => (
+                   <Marker key={i} position={loc} label={loc === customerLoc ? "C" : `${i+1}`} title={loc === customerLoc ? "Cliente" : "Parada"} />
+                 ))}
                  {driverLocation && <Marker position={driverLocation} label="Yo" icon={{ path: google.maps.SymbolPath.CIRCLE, scale: 7, fillColor: "#4f46e5", fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />}
                  <Polyline 
-                    path={[DefaultMerchantLoc, customerLoc]} 
+                    path={driverLocation ? [driverLocation, ...fullRoute] : fullRoute} 
                     options={{ strokeColor: '#4f46e5', strokeOpacity: 0.8, strokeWeight: 4 }} 
                  />
                </GoogleMap>

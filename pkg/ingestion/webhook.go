@@ -11,6 +11,8 @@ import (
 	"solidbit/pkg/dispatch"
 	"solidbit/pkg/geocoding"
 	"solidbit/pkg/payments"
+	"solidbit/pkg/pricing"
+	"solidbit/pkg/routing"
 )
 
 // MetaWebhook payload simplificado para extraer mensajes de WhatsApp Business API.
@@ -37,9 +39,11 @@ type IngestionService struct {
 	dispatcher *dispatch.Dispatcher
 	geocoder   *geocoding.Client
 	payments   *payments.StripeClient
+	routing    *routing.RoutingClient
+	pricing    *pricing.PricingEngine
 }
 
-func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, paymentsClient *payments.StripeClient) *IngestionService {
+func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, paymentsClient *payments.StripeClient, routingClient *routing.RoutingClient, pricingEngine *pricing.PricingEngine) *IngestionService {
 	return &IngestionService{
 		pool:       pool,
 		parser:     parser,
@@ -47,6 +51,8 @@ func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWra
 		dispatcher: dispatcher,
 		geocoder:   geocoder,
 		payments:   paymentsClient,
+		routing:    routingClient,
+		pricing:    pricingEngine,
 	}
 }
 
@@ -138,18 +144,47 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 
 	log.Printf("[Ingestion OK] Persistiendo Pedido UUID -> %s", orderID)
 
+	// Cálculo Inteligente de Rutas y Precios
+	// Obtenemos distancia real usando Google Routes API
+	distanceMeters := 0
+	if geoErr == nil {
+		distanceMeters, err = s.routing.GetDistanceMeters(ctx, routing.Location{Lat: merchLat, Lng: merchLon}, routing.Location{Lat: lat, Lng: lon})
+		if err != nil {
+			log.Printf("[Motor Logístico WARN] No se pudo obtener distancia exacta: %v. Usando distancia fallback de 5km.", err)
+			distanceMeters = 5000
+		}
+	} else {
+		distanceMeters = 5000 // Fallback distance if precise geo failed
+	}
+
+	// Costo de los productos ficticio temporalmente (si no lo extrae la IA)
+	itemsPrice := 100.00
+	
+	totalAmount, amountCents := s.pricing.CalculateOrderTotal(ctx, distanceMeters, itemsPrice)
+
+	breakdown := map[string]interface{}{
+		"items_price": itemsPrice,
+		"distance_m":  distanceMeters,
+		"base_price":  s.pricing.BasePrice,
+		"price_km":    s.pricing.PricePerKM,
+		"service_fee": s.pricing.ServiceFee,
+	}
+	breakdownJSON, _ := json.Marshal(breakdown)
+
+	log.Printf("[Pricing] Pedido %s: Distancia %dm, Total Calculado: $%.2f MXN", orderID, distanceMeters, totalAmount)
+
 	// Crear Link de Pago de Stripe
-	// Asumimos un monto dummy de $150.00 MXN para el ejemplo
-	amountCents := int64(15000)
 	stripeLink, err := s.payments.CreatePaymentLink(ctx, orderID, amountCents)
 	if err != nil {
 		log.Printf("[Pagos WARN] No se pudo generar url de pago para Pedido [%s]: %v", orderID, err)
+		// Solo actualizamos el total devuelto por Pricing
+		_, _ = s.db.Pool.Exec(ctx, "UPDATE orders SET total_amount = $1, price_breakdown = $2 WHERE id = $3", totalAmount, breakdownJSON, orderID)
 	} else {
 		log.Printf("[Pagos] Link creado para Pedido [%s]: %s", orderID, stripeLink)
-		// Actualizar la orden con el link
-		_, err = s.db.Pool.Exec(ctx, "UPDATE orders SET stripe_link_url = $1 WHERE id = $2", stripeLink, orderID)
+		// Actualizar la orden con el link y los importes
+		_, err = s.db.Pool.Exec(ctx, "UPDATE orders SET stripe_link_url = $1, total_amount = $2, price_breakdown = $3 WHERE id = $4", stripeLink, totalAmount, breakdownJSON, orderID)
 		if err != nil {
-			log.Printf("[Pagos WARN] No se guardo link de stripe en la DB para Pedido [%s]: %v", orderID, err)
+			log.Printf("[Pagos WARN] No se guardo metadata en la DB para Pedido [%s]: %v", orderID, err)
 		}
 	}
 
