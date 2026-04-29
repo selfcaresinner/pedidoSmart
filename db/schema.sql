@@ -54,6 +54,7 @@ CREATE TABLE orders (
     total_amount NUMERIC(10, 2) DEFAULT 0.00,
     price_breakdown JSONB,
     delivery_sequence_priority INT DEFAULT 0,
+    proximity_notified BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );

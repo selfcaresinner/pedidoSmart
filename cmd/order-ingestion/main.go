@@ -12,6 +12,7 @@ import (
 	"solidbit/pkg/dispatch"
 	"solidbit/pkg/geocoding"
 	"solidbit/pkg/ingestion"
+	"solidbit/pkg/notifications"
 	"solidbit/pkg/payments"
 	"solidbit/pkg/admin"
 	"solidbit/pkg/routing"
@@ -68,7 +69,11 @@ func main() {
 	http.HandleFunc("/admin/metrics", adminService.AuthMiddleware(adminService.GetGlobalMetrics))
 	http.HandleFunc("/admin/live-map", adminService.AuthMiddleware(adminService.GetActiveLiveMap))
 
-	// 4. Servidor HTTP Asíncrono
+	// 5. Iniciar Monitor de Proximidad
+	proximityMonitor := notifications.NewProximityMonitor(db)
+	proximityMonitor.Start(ctx)
+
+	// 6. Servidor HTTP Asíncrono
 	server := &http.Server{Addr: ":" + cfg.Port}
 	go func() {
 		log.Printf("[SolidBit] Order Ingestion Service listo y ejecutando -> Puerto :%s\n", cfg.Port)
