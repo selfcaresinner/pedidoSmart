@@ -80,6 +80,7 @@ func main() {
 	adminService := admin.NewAdminService(db, cfg.AdminPassword)
 	http.HandleFunc("/admin/metrics", adminService.AuthMiddleware(adminService.GetGlobalMetrics))
 	http.HandleFunc("/admin/live-map", adminService.AuthMiddleware(adminService.GetActiveLiveMap))
+	http.HandleFunc("/api/admin/settle", adminService.AuthMiddleware(adminService.HandleSettleDriver))
 
 	// 5. Iniciar Monitor de Proximidad
 	proximityMonitor := notifications.NewProximityMonitor(db, metaClient)

@@ -38,10 +38,10 @@ func (s *AdminService) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 // GetGlobalMetrics obtiene la sumatoria de ingresos de la Vista admin_metrics
 func (s *AdminService) GetGlobalMetrics(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT total_stripe, total_cash, delivered_today FROM admin_metrics`
-	var stripe, cash float64
+	query := `SELECT total_transfers, total_cash, total_settled, delivered_today FROM admin_metrics`
+	var transfers, cash, settled float64
 	var delivered int
-	err := s.db.Pool.QueryRow(r.Context(), query).Scan(&stripe, &cash, &delivered)
+	err := s.db.Pool.QueryRow(r.Context(), query).Scan(&transfers, &cash, &settled, &delivered)
 	if err != nil {
 		log.Printf("[Admin API ERR] Fallo consultando admin_metrics: %v", err)
 		http.Error(w, "Error interno en metricas", http.StatusInternalServerError)
@@ -50,8 +50,9 @@ func (s *AdminService) GetGlobalMetrics(w http.ResponseWriter, r *http.Request) 
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"total_stripe":    stripe,
+		"total_transfers": transfers,
 		"total_cash":      cash,
+		"total_settled":   settled,
 		"delivered_today": delivered,
 	})
 }
@@ -128,4 +129,70 @@ func (s *AdminService) GetActiveLiveMap(w http.ResponseWriter, r *http.Request) 
 		"active_orders":  activeOrders,
 		"active_drivers": activeDrivers,
 	})
+}
+
+func (s *AdminService) HandleSettleDriver(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		DriverID string  `json:"driver_id"`
+		Amount   float64 `json:"amount"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Amount <= 0 {
+		http.Error(w, "Amount must be positive", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	// 1. Verificar balance actual
+	var currentBalance float64
+	err = tx.QueryRow(ctx, "SELECT cash_on_hand FROM driver_wallets WHERE driver_id = $1", req.DriverID).Scan(&currentBalance)
+	if err != nil {
+		http.Error(w, "Driver wallet not found", http.StatusNotFound)
+		return
+	}
+
+	if req.Amount > currentBalance {
+		http.Error(w, "Amount exceeds current balance", http.StatusBadRequest)
+		return
+	}
+
+	// 2. Restar del wallet
+	_, err = tx.Exec(ctx, "UPDATE driver_wallets SET cash_on_hand = cash_on_hand - $1, last_liquidation_at = now(), updated_at = now() WHERE driver_id = $2", req.Amount, req.DriverID)
+	if err != nil {
+		http.Error(w, "Error updating wallet", http.StatusInternalServerError)
+		return
+	}
+
+	// 3. Registrar liquidación
+	_, err = tx.Exec(ctx, "INSERT INTO settlements (driver_id, amount, created_at) VALUES ($1, $2, now())", req.DriverID, req.Amount)
+	if err != nil {
+		http.Error(w, "Error creating settlement record", http.StatusInternalServerError)
+		return
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "Error committing transaction", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[Admin Settle] Repartidor %s liquidado por $%.2f", req.DriverID, req.Amount)
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": "settled"})
 }

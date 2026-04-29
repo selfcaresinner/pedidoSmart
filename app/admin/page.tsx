@@ -10,9 +10,23 @@ import { GoogleMap, useLoadScript, Marker } from '@react-google-maps/api';
 
 // Types
 interface Metrics {
-  total_stripe: number;
+  total_transfers: number;
   total_cash: number;
+  total_settled: number;
   delivered_today: number;
+}
+
+interface Wallet {
+  driver_id: string;
+  cash_on_hand: number;
+  updated_at: string;
+}
+
+interface Settlement {
+  id: string;
+  driver_id: string;
+  amount: number;
+  created_at: string;
 }
 
 interface PerformanceDriver {
@@ -20,15 +34,20 @@ interface PerformanceDriver {
   name: string;
   status: string;
   deliveries: number;
+  wallet?: Wallet;
 }
 
 export default function AdminDashboardPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passInput, setPassInput] = useState("");
 
-  const [metrics, setMetrics] = useState<Metrics>({ total_stripe: 0, total_cash: 0, delivered_today: 0 });
+  const [metrics, setMetrics] = useState<Metrics>({ total_transfers: 0, total_cash: 0, total_settled: 0, delivered_today: 0 });
   const [drivers, setDrivers] = useState<PerformanceDriver[]>([]);
+  const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [liveMapData, setLiveMapData] = useState<{ active_orders: any[], active_drivers: any[] }>({ active_orders: [], active_drivers: [] });
+  const [settlingDriver, setSettlingDriver] = useState<PerformanceDriver | null>(null);
+  const [settleAmount, setSettleAmount] = useState<string>("");
+  const [isSettling, setIsSettling] = useState(false);
 
   const { isLoaded } = useLoadScript({
     googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || '',
@@ -61,21 +80,34 @@ export default function AdminDashboardPage() {
         // console.error(metricsErr);
       }
 
-      // Fetch Drivers para la tabla de rendimiento
+      // Fetch Drivers y Wallets
       const { data: driversData, error: drvErr } = await supabase
         .from('drivers')
-        .select('id, name, status');
+        .select('*, driver_wallets(*)');
       
       if (!drvErr && driversData) {
-        // Mock de entregas, o lo ideal sería un COUNT agrupado
-        const mapped = driversData.map(d => ({ ...d, deliveries: Math.floor(Math.random() * 10) }));
-        setDrivers(mapped);
+        setDrivers(driversData.map(d => ({
+          ...d, 
+          deliveries: 0, // In reality count from orders
+          wallet: d.driver_wallets ? d.driver_wallets[0] : undefined
+        })));
         
         // Populate live map data mock
         setLiveMapData({
           active_orders: [], 
           active_drivers: driversData.map(d => ({...d, location: { lat: 27.9667 + (Math.random()*0.01), lng: -110.8988 + (Math.random()*0.01) }}))
         });
+      }
+
+      // Fetch Recent Settlements
+      const { data: settleData } = await supabase
+        .from('settlements')
+        .select('*, drivers(name)')
+        .order('created_at', { ascending: false })
+        .limit(5);
+      
+      if (settleData) {
+        setSettlements(settleData as any);
       }
 
     } catch(e) {
@@ -104,6 +136,38 @@ export default function AdminDashboardPage() {
       supabase.removeChannel(channel);
     };
   }, [isAuthenticated]);
+
+  const handleSettle = async () => {
+    if (!settlingDriver || !settleAmount || parseFloat(settleAmount) <= 0) return;
+    
+    setIsSettling(true);
+    try {
+      const resp = await fetch('/api/admin/settle', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Admin-Password': passInput
+        },
+        body: JSON.stringify({
+          driver_id: settlingDriver.id,
+          amount: parseFloat(settleAmount)
+        })
+      });
+
+      if (resp.ok) {
+        setSettlingDriver(null);
+        setSettleAmount("");
+        fetchInitialData();
+      } else {
+        const txt = await resp.text();
+        alert("Error: " + txt);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsSettling(false);
+    }
+  };
 
   if (!isAuthenticated) {
     return (
@@ -155,39 +219,62 @@ export default function AdminDashboardPage() {
           <div className="grid grid-cols-2 gap-4">
             <motion.div initial={{opacity:0, y: 10}} animate={{opacity:1, y:0}} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                <div className="text-gray-400 mb-2"><Wallet className="w-5 h-5"/></div>
-               <p className="text-xs text-gray-500 font-semibold mb-1">STRIPE DIGITAL</p>
-               <h3 className="text-xl font-bold text-indigo-600">${metrics.total_stripe?.toFixed(2) || '0.00'}</h3>
+               <p className="text-xs text-gray-500 font-semibold mb-1">TRANSFERENCIAS</p>
+               <h3 className="text-xl font-bold text-indigo-600">${metrics.total_transfers?.toFixed(2) || '0.00'}</h3>
             </motion.div>
             <motion.div initial={{opacity:0, y: 10}} animate={{opacity:1, y:0}} transition={{delay: 0.1}} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                <div className="text-gray-400 mb-2"><DollarSign className="w-5 h-5"/></div>
-               <p className="text-xs text-gray-500 font-semibold mb-1">EFECTIVO FÍSICO</p>
-               <h3 className="text-xl font-bold text-emerald-600">${metrics.total_cash?.toFixed(2) || '0.00'}</h3>
+               <p className="text-xs text-gray-500 font-semibold mb-1">EFECTIVO EN CALLE</p>
+               <h3 className="text-xl font-bold text-orange-600">${metrics.total_cash?.toFixed(2) || '0.00'}</h3>
             </motion.div>
-            <motion.div initial={{opacity:0, y: 10}} animate={{opacity:1, y:0}} transition={{delay: 0.2}} className="col-span-2 bg-white p-4 rounded-2xl shadow-sm border border-gray-100 flex items-center justify-between">
-               <div>
-                  <p className="text-xs text-gray-500 font-semibold mb-1">ENTREGAS DE HOY</p>
-                  <h3 className="text-2xl font-bold text-gray-900">{metrics.delivered_today || 0}</h3>
-               </div>
-               <div className="w-12 h-12 bg-green-50 text-green-600 rounded-full flex items-center justify-center">
-                  <PackageCheck className="w-6 h-6"/>
-               </div>
+            <motion.div initial={{opacity:0, y: 10}} animate={{opacity:1, y:0}} transition={{delay: 0.2}} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+               <div className="text-gray-400 mb-2"><PackageCheck className="w-5 h-5"/></div>
+               <p className="text-xs text-gray-500 font-semibold mb-1">LIQUIDADO</p>
+               <h3 className="text-xl font-bold text-emerald-600">${metrics.total_settled?.toFixed(2) || '0.00'}</h3>
+            </motion.div>
+            <motion.div initial={{opacity:0, y: 10}} animate={{opacity:1, y:0}} transition={{delay: 0.3}} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
+               <div className="text-gray-400 mb-2"><Box className="w-5 h-5"/></div>
+               <p className="text-xs text-gray-500 font-semibold mb-1">ENTREGAS HOY</p>
+               <h3 className="text-xl font-bold text-gray-900">{metrics.delivered_today || 0}</h3>
             </motion.div>
           </div>
 
           <h2 className="text-lg font-bold text-gray-800 flex items-center gap-2 mt-8">
-            <Users className="w-5 h-5" /> Rendimiento de Flota
+            <Users className="w-5 h-5" /> Arqueo de Caja (Repartidores)
           </h2>
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
              {drivers.map((drv, i) => (
                <div key={drv.id} className={`flex items-center justify-between p-4 ${i !== drivers.length - 1 ? 'border-b border-gray-50' : ''}`}>
                   <div className="flex items-center gap-3">
                      <div className={`w-2 h-2 rounded-full ${drv.status === 'available' ? 'bg-emerald-500' : 'bg-gray-300'}`} />
-                     <p className="font-semibold text-sm text-gray-900">{drv.name}</p>
+                     <div>
+                        <p className="font-semibold text-sm text-gray-900">{drv.name}</p>
+                        <p className="text-[10px] text-gray-400 uppercase font-bold">DEUDA: ${(drv.wallet?.cash_on_hand || 0).toFixed(2)}</p>
+                     </div>
                   </div>
-                  <div className="text-xs font-bold bg-gray-100 text-gray-600 px-2 py-1 rounded">
-                     {drv.deliveries} Entregas
-                  </div>
+                  <button 
+                    onClick={() => setSettlingDriver(drv)}
+                    disabled={(drv.wallet?.cash_on_hand || 0) <= 0}
+                    className="text-[10px] font-bold bg-indigo-50 text-indigo-700 px-3 py-1.5 rounded-lg hover:bg-indigo-100 disabled:opacity-50 disabled:bg-gray-50 disabled:text-gray-400 transition-colors"
+                  >
+                     LIQUIDAR
+                  </button>
                </div>
+             ))}
+          </div>
+
+          <h2 className="text-xs font-bold text-gray-400 uppercase tracking-widest mt-8 mb-3">
+             Historial de Liquidaciones
+          </h2>
+          <div className="space-y-2">
+             {settlements.map((s: any) => (
+                <div key={s.id} className="bg-white p-3 rounded-xl border border-gray-50 flex items-center justify-between shadow-sm">
+                   <div>
+                      <p className="text-xs font-bold text-gray-700">{s.drivers?.name}</p>
+                      <p className="text-[9px] text-gray-400">{new Date(s.created_at).toLocaleString()}</p>
+                   </div>
+                   <p className="text-sm font-bold text-emerald-600">+${s.amount.toFixed(2)}</p>
+                </div>
              ))}
           </div>
 
@@ -222,6 +309,47 @@ export default function AdminDashboardPage() {
         </div>
 
       </main>
+
+      {/* Modal de Liquidación */}
+      {settlingDriver && (
+         <div className="fixed inset-0 z-50 bg-indigo-950/40 backdrop-blur-sm flex items-center justify-center p-4">
+            <motion.div initial={{scale: 0.9, opacity: 0}} animate={{scale: 1, opacity: 1}} className="bg-white rounded-3xl shadow-2xl p-8 max-w-sm w-full border border-gray-100">
+               <h3 className="text-lg font-bold text-gray-900 mb-2">Liquidar efectivo</h3>
+               <p className="text-sm text-gray-500 mb-6">Registra el dinero recibido físicamente de <b>{settlingDriver.name}</b>.</p>
+               
+               <div className="mb-6">
+                  <label className="text-[10px] font-bold text-gray-400 uppercase mb-2 block">Monto a liquidar</label>
+                  <div className="relative">
+                     <span className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-400 font-bold">$</span>
+                     <input 
+                        type="number"
+                        value={settleAmount}
+                        onChange={(e)=>setSettleAmount(e.target.value)}
+                        placeholder={(settlingDriver.wallet?.cash_on_hand || 0).toString()}
+                        className="w-full bg-gray-50 border-0 rounded-2xl py-4 pl-8 pr-4 text-xl font-bold focus:ring-2 focus:ring-indigo-600 transition-all"
+                     />
+                  </div>
+                  <p className="text-[10px] text-indigo-600 font-bold mt-2">DEUDA TOTAL: ${(settlingDriver.wallet?.cash_on_hand || 0).toFixed(2)}</p>
+               </div>
+
+               <div className="flex gap-3">
+                  <button 
+                    onClick={() => setSettlingDriver(null)}
+                    className="flex-1 py-3 text-gray-500 font-bold text-sm hover:bg-gray-50 rounded-2xl transition-colors"
+                  >
+                     Cancelar
+                  </button>
+                  <button 
+                    onClick={handleSettle}
+                    disabled={isSettling || !settleAmount || parseFloat(settleAmount) > (settlingDriver.wallet?.cash_on_hand || 0)}
+                    className="flex-[2] bg-indigo-900 text-white py-3 rounded-2xl font-bold text-sm hover:bg-indigo-800 disabled:opacity-50 shadow-lg shadow-indigo-100 transition-all"
+                  >
+                     {isSettling ? "Procesando..." : "Confirmar Recepción"}
+                  </button>
+               </div>
+            </motion.div>
+         </div>
+      )}
     </div>
   );
 }

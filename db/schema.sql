@@ -70,6 +70,14 @@ CREATE TABLE driver_wallets (
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Tabla: Settlements (Auditoría de Liquidaciones de Efectivo)
+CREATE TABLE settlements (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    driver_id UUID REFERENCES drivers(id) NOT NULL,
+    amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0),
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
 -- Tabla: Tracking History (Registro de coordenadas temporal para optimización y soporte)
 CREATE TABLE tracking_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -97,6 +105,7 @@ CREATE INDEX drivers_location_idx ON drivers USING GIST (current_location);
 CREATE INDEX merchants_location_idx ON merchants USING GIST (location);
 CREATE INDEX orders_delivery_location_idx ON orders USING GIST (delivery_location);
 CREATE INDEX tracking_history_location_idx ON tracking_history USING GIST (location);
+CREATE INDEX settlements_driver_idx ON settlements(driver_id);
 
 -- Trigger: Reseteo de prioridad al entregar
 CREATE OR REPLACE FUNCTION reset_sequence_priority()
@@ -236,5 +245,6 @@ CREATE OR REPLACE VIEW admin_metrics AS
 SELECT
     (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'transfer' AND payment_status = 'paid') AS total_transfers,
     (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'cash' AND status IN ('delivered')) AS total_cash,
+    (SELECT COALESCE(SUM(amount), 0) FROM settlements) AS total_settled,
     (SELECT COUNT(*) FROM orders WHERE status = 'delivered' AND DATE(updated_at) = CURRENT_DATE) AS delivered_today;
 
