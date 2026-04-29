@@ -5,43 +5,57 @@ import (
 	"testing"
 )
 
-func TestGeminiParser_OrderIntention(t *testing.T) {
-	// Simulamos respuestas JSON de la IA (Mocking)
-	mockJSON := `{
-		"is_order": true,
-		"delivery_address": "Av. Reforma 222, CDMX",
-		"customer_name": "Carlos Slim",
-		"items": "3 Tacos al Pastor, 1 Coca-Cola"
+func TestGeminiParser_Inference(t *testing.T) {
+	// Caso 1: Pedido Real
+	mockOrderJSON := `{
+		"intent": "order",
+		"producto": "Pizza Pepperoni",
+		"cantidad": 2,
+		"direccion_aproximada": "Calle 10, Guaymas"
 	}`
 
-	var intention OrderIntention
-	err := json.Unmarshal([]byte(mockJSON), &intention)
-	if err != nil {
-		t.Fatalf("Fallo parseando mock JSON de la IA: %v", err)
+	var orderInference AIInference
+	if err := json.Unmarshal([]byte(mockOrderJSON), &orderInference); err != nil {
+		t.Fatalf("Fallo parseando mock de pedido: %v", err)
 	}
 
-	if !intention.IsOrder {
-		t.Errorf("Expected IsOrder true")
+	if orderInference.Intent != "order" {
+		t.Errorf("Expected intent 'order', got %s", orderInference.Intent)
 	}
-	if intention.DeliveryAddress != "Av. Reforma 222, CDMX" {
-		t.Errorf("Fallo en dirección extraída: %s", intention.DeliveryAddress)
+	if orderInference.Producto != "Pizza Pepperoni" {
+		t.Errorf("Producto incorrecto: %s", orderInference.Producto)
 	}
 
-	// Caso: Dirección incompleta o formato inesperado
-	mockIncompleteJSON := `{
-		"is_order": true,
-		"delivery_address": "",
-		"customer_name": "",
-		"items": ""
+	// Caso 2: Consulta (Query) sobre horarios
+	mockQueryJSON := `{
+		"intent": "query",
+		"response_text": "Nuestro horario es de 12:00 PM a 10:00 PM todos los días."
 	}`
 
-	var incIntention OrderIntention
-	err = json.Unmarshal([]byte(mockIncompleteJSON), &incIntention)
-	if err != nil {
-		t.Fatalf("Fallo parseando JSON de IA incompleto: %v", err)
+	var queryInference AIInference
+	if err := json.Unmarshal([]byte(mockQueryJSON), &queryInference); err != nil {
+		t.Fatalf("Fallo parseando mock de consulta: %v", err)
 	}
 
-	if incIntention.DeliveryAddress != "" {
-		t.Errorf("Se esperaba dirección vacía para manejar faltantes de datos")
+	if queryInference.Intent != "query" {
+		t.Errorf("Expected intent 'query', got %s", queryInference.Intent)
+	}
+	if queryInference.ResponseText == "" {
+		t.Error("Se esperaba una respuesta de texto para la consulta")
+	}
+
+	// Caso 3: Saludo (Chit-chat)
+	mockChatJSON := `{
+		"intent": "chit_chat",
+		"response_text": "¡Hola! Soy el asistente de SolidBit, ¿en qué puedo ayudarte hoy?"
+	}`
+
+	var chatInference AIInference
+	if err := json.Unmarshal([]byte(mockChatJSON), &chatInference); err != nil {
+		t.Fatalf("Fallo parseando mock de chit-chat: %v", err)
+	}
+
+	if chatInference.Intent != "chit_chat" {
+		t.Errorf("Expected intent 'chit_chat', got %s", chatInference.Intent)
 	}
 }

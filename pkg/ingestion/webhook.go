@@ -106,13 +106,27 @@ func (s *IngestionService) HandleMetaWebhook(w http.ResponseWriter, r *http.Requ
 func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto string) error {
 	log.Printf("[Ingestion] Iniciando Inferencia IA para SMS de %s", numEnvio)
 
-	orderData, err := s.parser.ParseOrderText(ctx, texto)
+	inference, err := s.parser.ParseOrderText(ctx, texto)
 	if err != nil {
 		return fmt.Errorf("error de extracción NLP mediante Gemini: %w", err)
 	}
 
+	// ENRUTADOR DE INTENCIONES
+	if inference.Intent == "query" || inference.Intent == "chit_chat" {
+		log.Printf("[Ingestion Conversational] Intención: %s. Enviando respuesta: %s", inference.Intent, inference.ResponseText)
+		if sendErr := s.metaClient.SendTextMessage(ctx, numEnvio, inference.ResponseText); sendErr != nil {
+			log.Printf("[WhatsApp API OUTBOUND ERR] %v", sendErr)
+		}
+		return nil
+	}
+
+	if inference.Intent != "order" {
+		log.Printf("[Ingestion] Intención desconocida o no manejada: %s", inference.Intent)
+		return nil
+	}
+
 	log.Printf("[Ingestion EXITO] -> Producto: %s | Qty: %d | Zona: %s",
-		orderData.Producto, orderData.Cantidad, orderData.DireccionAproximada)
+		inference.Producto, inference.Cantidad, inference.DireccionAproximada)
 
 	// Lógica segura de Base de Datos
 	// Extraemos temporalmente un Merchant para respetar la foreign key e inyectar un fallback local.
@@ -126,10 +140,10 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 	}
 
 	// Geocodificación Real
-	lat, lon, geoErr := s.geocoder.ResolveAddress(ctx, orderData.DireccionAproximada)
+	lat, lon, geoErr := s.geocoder.ResolveAddress(ctx, inference.DireccionAproximada)
 	if geoErr != nil {
 		// Fallback: usar la ubicación del Merchant para no perder la venta
-		log.Printf("[Ingestion ERROR] Fallo al geocodificar '%s': %v. Haciendo fallback a ubicación de Merchant.", orderData.DireccionAproximada, geoErr)
+		log.Printf("[Ingestion ERROR] Fallo al geocodificar '%s': %v. Haciendo fallback a ubicación de Merchant.", inference.DireccionAproximada, geoErr)
 		lon = merchLon
 		lat = merchLat
 	} else {
@@ -137,7 +151,7 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 	}
 
 	var orderID string
-	itemsDesc := fmt.Sprintf("%dx %s", orderData.Cantidad, orderData.Producto)
+	itemsDesc := fmt.Sprintf("%dx %s", inference.Cantidad, inference.Producto)
 	insertQuery := `
 		INSERT INTO orders (merchant_id, customer_name, customer_phone, items_description, delivery_location, payment_method, payment_status)
 		VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography, 'stripe', 'pending')

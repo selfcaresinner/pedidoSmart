@@ -13,11 +13,13 @@ import (
 	"solidbit/pkg/core"
 )
 
-// OrderData es el contrato de salida JSON de la IA.
-type OrderData struct {
-	Producto            string `json:"producto"`
-	Cantidad            int    `json:"cantidad"`
-	DireccionAproximada string `json:"direccion_aproximada"`
+// AIInference es el contrato de salida JSON de la IA que incluye la intención detectada.
+type AIInference struct {
+	Intent              string `json:"intent"`               // order, query, chit_chat
+	ResponseText        string `json:"response_text"`        // Respuesta amable si es query o chit_chat
+	Producto            string `json:"producto"`             // Solo si es order
+	Cantidad            int    `json:"cantidad"`             // Solo si es order
+	DireccionAproximada string `json:"direccion_aproximada"` // Solo si es order
 }
 
 // AIParser comunica con Gemini.
@@ -39,8 +41,8 @@ func NewAIParser(apiKey string, monitor *core.ApiMonitor) *AIParser {
 	}
 }
 
-// ParseOrderText procesa el texto puro del cliente y retorna nuestro modelo OrderData con JSON extraído.
-func (p *AIParser) ParseOrderText(ctx context.Context, text string) (*OrderData, error) {
+// ParseOrderText procesa el texto puro del cliente y retorna nuestro modelo AIInference con la intención y datos extraídos.
+func (p *AIParser) ParseOrderText(ctx context.Context, text string) (*AIInference, error) {
 	// Gemini 1.5 Flash minimiza latencia y costo en extracciones.
 	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=%s", p.APIKey)
 
@@ -55,18 +57,32 @@ func (p *AIParser) ParseOrderText(ctx context.Context, text string) (*OrderData,
 		},
 		"systemInstruction": map[string]interface{}{
 			"parts": []map[string]interface{}{
-				{"text": `Eres el Procesador de Lenguaje para un sistema de delivery logístico (SolidBit).
-Tu ÚNICA función es extraer información de pedidos hacia JSON estructurado.
-REGLAS ESTRICTAS:
-1. Retorna ÚNICAMENTE JSON válido. No uses bloques markdown.
-2. Estructura requerida: {"producto": "string", "cantidad": number, "direccion_aproximada": "string"}.
-3. Si en el texto no hallas la cantidad, asume 1.
-4. Si la dirección no se especifica, envia "".`},
+				{"text": `Eres el Cerebro Conversacional de SolidBit, un sistema de delivery inteligente.
+Tu función es clasificar el mensaje del usuario y responder adecuadamente.
+
+CONOCIMIENTO DE SOLIDBIT:
+- Horarios: Todos los días de 12:00 PM a 10:00 PM.
+- Cobertura: Operamos exclusivamente en Empalme y Guaymas, Sonora.
+- Métodos de Pago: Aceptamos Tarjeta (vía Stripe) y Efectivo.
+
+REGLAS DE RESPUESTA:
+1. Retorna ÚNICAMENTE JSON válido.
+2. Campos:
+   - "intent": Enum ["order", "query", "chit_chat"].
+   - "response_text": Tu respuesta amable al cliente (obligatoria en query y chit_chat).
+   - "producto": Nombre del producto (solo si intent es "order").
+   - "cantidad": Número (solo si intent es "order", default 1).
+   - "direccion_aproximada": Dirección detectada (solo si intent es "order").
+
+LOGICA DE INTENCIONES:
+- "order": Cuando el usuario claramente quiere comprar/pedir algo específico.
+- "query": Dudas sobre horarios, zona, precios o cómo funciona.
+- "chit_chat": Saludos (Hola), despedidas (Gracias) o comentarios generales.`},
 			},
 		},
 		"generationConfig": map[string]interface{}{
 			"responseMimeType": "application/json",
-			"temperature":      0.1, // Temperatura baja: precisión analítica
+			"temperature":      0.2, // Un poco más de temperatura para respuestas humanas en chat
 		},
 	}
 
@@ -120,10 +136,10 @@ REGLAS ESTRICTAS:
 	jsonString := aiResp.Candidates[0].Content.Parts[0].Text
 	jsonString = strings.TrimSpace(jsonString)
 
-	var order OrderData
-	if err := json.Unmarshal([]byte(jsonString), &order); err != nil {
+	var inference AIInference
+	if err := json.Unmarshal([]byte(jsonString), &inference); err != nil {
 		return nil, fmt.Errorf("el modelo no generó la estructura JSON correcta: %w (Valor: %s)", err, jsonString)
 	}
 
-	return &order, nil
+	return &inference, nil
 }
