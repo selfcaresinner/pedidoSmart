@@ -76,6 +76,17 @@ CREATE TABLE settlements (
     driver_id UUID REFERENCES drivers(id) NOT NULL,
     amount NUMERIC(10, 2) NOT NULL CHECK (amount > 0),
     created_at TIMESTAMPTZ DEFAULT now()
+ );
+ 
+ -- Tabla: Wallet Transactions (Auditoría Total de Movimientos de Efectivo)
+CREATE TABLE wallet_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wallet_id UUID REFERENCES drivers(id) NOT NULL, -- Uso simplificado vinculando a drivers id
+    order_id UUID REFERENCES orders(id),
+    amount NUMERIC(10, 2) NOT NULL,
+    transaction_type TEXT NOT NULL CHECK (transaction_type IN ('entry', 'exit')),
+    description TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
 );
 
 -- Tabla: Tracking History (Registro de coordenadas temporal para optimización y soporte)
@@ -106,6 +117,7 @@ CREATE INDEX merchants_location_idx ON merchants USING GIST (location);
 CREATE INDEX orders_delivery_location_idx ON orders USING GIST (delivery_location);
 CREATE INDEX tracking_history_location_idx ON tracking_history USING GIST (location);
 CREATE INDEX settlements_driver_idx ON settlements(driver_id);
+CREATE INDEX wallet_transactions_wallet_idx ON wallet_transactions(wallet_id);
 
 -- Trigger: Reseteo de prioridad al entregar
 CREATE OR REPLACE FUNCTION reset_sequence_priority()

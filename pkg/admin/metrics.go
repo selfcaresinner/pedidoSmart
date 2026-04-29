@@ -187,6 +187,13 @@ func (s *AdminService) HandleSettleDriver(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// 4. Auditoría de Transacción (Salida de efectivo)
+	auditQuery := `
+		INSERT INTO wallet_transactions (wallet_id, amount, transaction_type, description)
+		VALUES ($1, $2, 'exit', 'Liquidación administrativa de efectivo')
+	`
+	_, _ = tx.Exec(ctx, auditQuery, req.DriverID, req.Amount)
+
 	if err := tx.Commit(ctx); err != nil {
 		http.Error(w, "Error committing transaction", http.StatusInternalServerError)
 		return

@@ -76,6 +76,7 @@ func main() {
 	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, routingClient, pricingEngine, metaClient, cfg.AppURL)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
 	http.HandleFunc("/api/driver/complete", service.HandleDriverComplete)
+	http.HandleFunc("/api/order/status", service.HandleOrderStatusUpdate)
 
 	adminService := admin.NewAdminService(db, cfg.AdminPassword)
 	http.HandleFunc("/admin/metrics", adminService.AuthMiddleware(adminService.GetGlobalMetrics))

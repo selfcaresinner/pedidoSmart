@@ -260,6 +260,17 @@ export default function DashboardPage() {
               })
           });
           if (!res.ok) throw new Error("Fallo al completar la orden en el backend");
+      } else if (nextStatus === 'picked_up') {
+          // Notificar recolección para que el bot avise al cliente
+          const res = await fetch('/api/order/status', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ 
+                  order_id: orderId, 
+                  status: 'picked_up'
+              })
+          });
+          if (!res.ok) throw new Error("Fallo al actualizar estado a recolectado");
       } else {
         const { error } = await supabase
           .from('orders')

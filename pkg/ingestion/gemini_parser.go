@@ -15,11 +15,13 @@ import (
 
 // AIInference es el contrato de salida JSON de la IA que incluye la intención detectada.
 type AIInference struct {
-	Intent              string `json:"intent"`               // order, query, chit_chat
+	Intent              string `json:"intent"`               // order, query, chit_chat, cancel
 	ResponseText        string `json:"response_text"`        // Respuesta amable si es query o chit_chat
 	Producto            string `json:"producto"`             // Solo si es order
 	Cantidad            int    `json:"cantidad"`             // Solo si es order
-	DireccionAproximada string `json:"direccion_aproximada"` // Solo si es order
+	PuntoRecoleccion    string `json:"punto_recoleccion"`     // Origen (ej. Tacos El Chino)
+	PuntoEntrega        string `json:"punto_entrega"`         // Destino (ej. Calle 10 #5)
+	DireccionAproximada string `json:"direccion_aproximada"` // Deprecated but kept for safety
 }
 
 // AIParser comunica con Gemini.
@@ -68,16 +70,19 @@ CONOCIMIENTO DE SOLIDBIT:
 REGLAS DE RESPUESTA:
 1. Retorna ÚNICAMENTE JSON válido.
 2. Campos:
-   - "intent": Enum ["order", "query", "chit_chat"].
+   - "intent": Enum ["order", "query", "chit_chat", "cancel"].
    - "response_text": Tu respuesta amable al cliente (obligatoria en query y chit_chat).
    - "producto": Nombre del producto (solo si intent es "order").
    - "cantidad": Número (solo si intent es "order", default 1).
+   - "punto_recoleccion": Lugar de origen (ej. Tacos El Chino).
+   - "punto_entrega": Lugar de destino (ej. Calle 10 #5).
    - "direccion_aproximada": Dirección detectada (solo si intent es "order").
 
 LOGICA DE INTENCIONES:
 - "order": Cuando el usuario claramente quiere comprar/pedir algo específico.
 - "query": Dudas sobre horarios, zona, precios o cómo funciona.
-- "chit_chat": Saludos (Hola), despedidas (Gracias) o comentarios generales.`},
+- "chit_chat": Saludos (Hola), despedidas (Gracias) o comentarios generales.
+- "cancel": Cuando el usuario pide cancelar su pedido.`},
 			},
 		},
 		"generationConfig": map[string]interface{}{

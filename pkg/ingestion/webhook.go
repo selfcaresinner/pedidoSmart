@@ -117,45 +117,84 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 		return nil
 	}
 
+	if inference.Intent == "cancel" {
+		log.Printf("[Ingestion] Intención: cancel. Procesando para %s", numEnvio)
+		// Buscar el último pedido activo del cliente
+		var orderID string
+		var driverID string
+		query := `
+			UPDATE orders 
+			SET status = 'cancelled', updated_at = now() 
+			WHERE id = (
+				SELECT id FROM orders 
+				WHERE customer_phone = $1 AND status IN ('pending', 'assigned', 'picked_up')
+				ORDER BY created_at DESC 
+				LIMIT 1
+			)
+			RETURNING id, COALESCE(driver_id::text, '')
+		`
+		err := s.db.Pool.QueryRow(ctx, query, numEnvio).Scan(&orderID, &driverID)
+		if err != nil {
+			log.Printf("[Ingestion Cancel] No se encontró pedido activo para %s", numEnvio)
+			s.metaClient.SendTextMessage(ctx, numEnvio, "No encontré un pedido activo tuyo para cancelar. Si crees que hay un error, contacta a soporte.")
+			return nil
+		}
+
+		// Si el repartidor estaba asignado, liberarlo
+		if driverID != "" && driverID != "" {
+			_, _ = s.db.Pool.Exec(ctx, "UPDATE drivers SET status = 'available' WHERE id = $1", driverID)
+		}
+
+		log.Printf("[Ingestion Cancel] Pedido %s cancelado exitosamente", orderID)
+		s.metaClient.SendTextMessage(ctx, numEnvio, "✅ Tu pedido ha sido cancelado correctamente. ¡Esperamos servirte pronto!")
+		return nil
+	}
+
 	if inference.Intent != "order" {
 		log.Printf("[Ingestion] Intención desconocida o no manejada: %s", inference.Intent)
 		return nil
 	}
 
-	log.Printf("[Ingestion EXITO] -> Producto: %s | Qty: %d | Zona: %s",
-		inference.Producto, inference.Cantidad, inference.DireccionAproximada)
+	log.Printf("[Ingestion EXITO] -> Producto: %s | Qty: %d | Recolección: %s | Entrega: %s",
+		inference.Producto, inference.Cantidad, inference.PuntoRecoleccion, inference.PuntoEntrega)
 
 	// Lógica segura de Base de Datos
 	// Extraemos temporalmente un Merchant para respetar la foreign key e inyectar un fallback local.
 	var merchantID string
-	var merchLon, merchLat float64
-	var merchantPhone string
-	err = s.db.Pool.QueryRow(ctx, "SELECT id, ST_X(location::geometry), ST_Y(location::geometry), coalesce(merchant_phone, '') FROM merchants LIMIT 1").Scan(&merchantID, &merchLon, &merchLat, &merchantPhone)
+	err = s.db.Pool.QueryRow(ctx, "SELECT id FROM merchants LIMIT 1").Scan(&merchantID)
 	if err != nil {
-		log.Println("[Ingestion WARN] Tabla merchants vacía. Se salta el flujo de guardado y despacho de la db.")
+		log.Println("[Ingestion WARN] Tabla merchants vacía. Se requiere al menos uno para persistencia.")
 		return nil
 	}
 
-	// Geocodificación Real
-	lat, lon, geoErr := s.geocoder.ResolveAddress(ctx, inference.DireccionAproximada)
-	if geoErr != nil {
-		// Fallback: usar la ubicación del Merchant para no perder la venta
-		log.Printf("[Ingestion ERROR] Fallo al geocodificar '%s': %v. Haciendo fallback a ubicación de Merchant.", inference.DireccionAproximada, geoErr)
-		lon = merchLon
-		lat = merchLat
-	} else {
-		log.Printf("[Ingestion GEO] Geocodificación Exitosa -> Lat: %.5f, Lon: %.5f", lat, lon)
+	// Geocodificación de Origen y Destino
+	latOrig, lonOrig, geoErrOrig := s.geocoder.ResolveAddress(ctx, inference.PuntoRecoleccion)
+	latDest, lonDest, geoErrDest := s.geocoder.ResolveAddress(ctx, inference.PuntoEntrega)
+
+	if geoErrDest != nil {
+		log.Printf("[Ingestion ERROR] Fallo al geocodificar entrega '%s': %v.", inference.PuntoEntrega, geoErrDest)
+		s.metaClient.SendTextMessage(ctx, numEnvio, "❌ Lo siento, no logré ubicar tu dirección de entrega. ¿Podrías ser más específico?")
+		return nil
+	}
+
+	if geoErrOrig != nil {
+		log.Printf("[Ingestion WARN] Fallo al geocodificar recolección '%s'. Usando ubicación de merchant.", inference.PuntoRecoleccion)
+		// Fallback to merchant location if source fails
+		var merchLon, merchLat float64
+		_ = s.db.Pool.QueryRow(ctx, "SELECT ST_X(location::geometry), ST_Y(location::geometry) FROM merchants WHERE id = $1", merchantID).Scan(&merchLon, &merchLat)
+		lonOrig = merchLon
+		latOrig = merchLat
 	}
 
 	var orderID string
 	itemsDesc := fmt.Sprintf("%dx %s", inference.Cantidad, inference.Producto)
 	insertQuery := `
 		INSERT INTO orders (merchant_id, customer_name, customer_phone, items_description, delivery_location, payment_method, payment_status)
-		VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography, 'stripe', 'pending')
+		VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($5, $6), 4326)::geography, 'cash', 'pending')
 		RETURNING id
 	`
 
-	err = s.db.Pool.QueryRow(ctx, insertQuery, merchantID, "Client IA", numEnvio, itemsDesc, lon, lat).Scan(&orderID)
+	err = s.db.Pool.QueryRow(ctx, insertQuery, merchantID, "Cliente WhatsApp", numEnvio, itemsDesc, lonDest, latDest).Scan(&orderID)
 	if err != nil {
 		return fmt.Errorf("fallo la persistencia del pedido: %w", err)
 	}
@@ -164,21 +203,16 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 
 	// Cálculo Inteligente de Rutas y Precios
 	// Obtenemos distancia real usando Google Routes API
-	distanceMeters := 0
-	if geoErr == nil {
-		distanceMeters, err = s.routing.GetDistanceMeters(ctx, routing.Location{Lat: merchLat, Lng: merchLon}, routing.Location{Lat: lat, Lng: lon})
-		if err != nil {
-			log.Printf("[Motor Logístico WARN] No se pudo obtener distancia exacta: %v. Usando distancia fallback de 5km.", err)
-			distanceMeters = 5000
-		}
-	} else {
-		distanceMeters = 5000 // Fallback distance if precise geo failed
+	distanceMeters, err := s.routing.GetDistanceMeters(ctx, routing.Location{Lat: latOrig, Lng: lonOrig}, routing.Location{Lat: latDest, Lng: lonDest})
+	if err != nil {
+		log.Printf("[Motor Logístico WARN] No se pudo obtener distancia exacta: %v. Usando distancia fallback de 5km.", err)
+		distanceMeters = 5000
 	}
 
 	// Costo de los productos ficticio temporalmente (si no lo extrae la IA)
-	itemsPrice := 100.00
+	itemsPrice := 0.00
 	
-	totalAmount, amountCents := s.pricing.CalculateOrderTotal(ctx, distanceMeters, itemsPrice)
+	totalAmount, _ := s.pricing.CalculateOrderTotal(ctx, distanceMeters, itemsPrice)
 
 	breakdown := map[string]interface{}{
 		"items_price": itemsPrice,
@@ -186,6 +220,8 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 		"base_price":  s.pricing.BasePrice,
 		"price_km":    s.pricing.PricePerKM,
 		"service_fee": s.pricing.ServiceFee,
+		"recoleccion": inference.PuntoRecoleccion,
+		"entrega":     inference.PuntoEntrega,
 	}
 	breakdownJSON, _ := json.Marshal(breakdown)
 
@@ -199,19 +235,53 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 
 	// Enviar WhatsApp al cliente
 	go func() {
-		msg := fmt.Sprintf("✅ ¡Pedido recibido! Total a pagar: $%.2f. Un repartidor ha sido asignado y va en camino a recoger tu pedido.", totalAmount)
+		msg := fmt.Sprintf("✅ ¡Pedido recibido! Total estimado: $%.2f. Un repartidor ha sido asignado y va en camino a recoger tu pedido en '%s'.", totalAmount, inference.PuntoRecoleccion)
 		if sendErr := s.metaClient.SendTextMessage(context.Background(), numEnvio, msg); sendErr != nil {
 			log.Printf("[WhatsApp API OUTBOUND ERR] %v", sendErr)
-		} else {
-			log.Printf("[WhatsApp API OUTBOUND] Confirmación de pedido enviada a %s", numEnvio)
 		}
 	}()
 
 	// Activación Asíncrona (Background Pool) del Motor Geográfico PostGIS
 	log.Printf("[Ingestion] Despachando repartidor automáticamente para orden %s", orderID)
-	s.dispatcher.DispatchAsynchronous(orderID, lon, lat)
+	s.dispatcher.DispatchAsynchronous(orderID, lonDest, latDest)
 
 	return nil
+}
+
+func (s *IngestionService) HandleOrderStatusUpdate(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var reqBody struct {
+		OrderID string `json:"order_id"`
+		Status  string `json:"status"` // picked_up, cancelled, etc.
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+		http.Error(w, "Invalid body", http.StatusBadRequest)
+		return
+	}
+
+	ctx := r.Context()
+	var customerPhone string
+	err := s.db.Pool.QueryRow(ctx, "UPDATE orders SET status = $1, updated_at = now() WHERE id = $2 RETURNING customer_phone", reqBody.Status, reqBody.OrderID).Scan(&customerPhone)
+	if err != nil {
+		log.Printf("[StatusUpdate] Error actualizando orden %s a %s: %v", reqBody.OrderID, reqBody.Status, err)
+		http.Error(w, "Error actualizando orden", http.StatusInternalServerError)
+		return
+	}
+
+	if reqBody.Status == "picked_up" && customerPhone != "" {
+		go func(phone string) {
+			msg := "🛵 ¡Tu repartidor ya tiene tu pedido! Va en camino a tu ubicación."
+			s.metaClient.SendTextMessage(context.Background(), phone, msg)
+		}(customerPhone)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"status": reqBody.Status})
 }
 
 func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.Request) {
@@ -221,9 +291,9 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 	}
 
 	var reqBody struct {
-		OrderID          string `json:"order_id"`
-		EvidenceURL      string `json:"delivery_evidence_url"`
-		DriverID         string `json:"driver_id"`
+		OrderID     string `json:"order_id"`
+		EvidenceURL string `json:"delivery_evidence_url"`
+		DriverID    string `json:"driver_id"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
@@ -231,9 +301,21 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	// Validación estricta de evidencia
+	if len(reqBody.EvidenceURL) < 10 || reqBody.EvidenceURL == "" {
+		http.Error(w, "Evidence URL is required and must be valid", http.StatusBadRequest)
+		return
+	}
+
 	ctx := r.Context()
-	
-	// Actualizar la orden con la url de evidencia y marcar como entregada
+	tx, err := s.db.Pool.Begin(ctx)
+	if err != nil {
+		http.Error(w, "Database error", http.StatusInternalServerError)
+		return
+	}
+	defer tx.Rollback(ctx)
+
+	// Actualizar la orden
 	var customerPhone string
 	var totalAmount float64
 	var paymentMethod string
@@ -243,14 +325,14 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 		WHERE id = $2 
 		RETURNING customer_phone, total_amount, payment_method
 	`
-	err := s.db.Pool.QueryRow(ctx, query, reqBody.EvidenceURL, reqBody.OrderID).Scan(&customerPhone, &totalAmount, &paymentMethod)
+	err = tx.QueryRow(ctx, query, reqBody.EvidenceURL, reqBody.OrderID).Scan(&customerPhone, &totalAmount, &paymentMethod)
 	if err != nil {
 		log.Printf("[Driver] Error completando orden %s: %v", reqBody.OrderID, err)
 		http.Error(w, "Error completando orden", http.StatusInternalServerError)
 		return
 	}
 
-	// Si fue pago en efectivo, actualizar la cartera del repartidor
+	// Actualizar Cartera y Auditoría si es efectivo
 	if paymentMethod == "cash" && reqBody.DriverID != "unknown" {
 		walletQuery := `
 			INSERT INTO driver_wallets (driver_id, cash_on_hand, updated_at)
@@ -258,23 +340,32 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 			ON CONFLICT (driver_id) 
 			DO UPDATE SET cash_on_hand = driver_wallets.cash_on_hand + $2, updated_at = now()
 		`
-		_, err := s.db.Pool.Exec(ctx, walletQuery, reqBody.DriverID, totalAmount)
+		_, err := tx.Exec(ctx, walletQuery, reqBody.DriverID, totalAmount)
 		if err != nil {
 			log.Printf("[Driver WALLET ERR] No se pudo actualizar cartera para driver %s: %v", reqBody.DriverID, err)
 		} else {
+			// Auditoría de Transacción
+			auditQuery := `
+				INSERT INTO wallet_transactions (wallet_id, order_id, amount, transaction_type, description)
+				VALUES ($1, $2, $3, 'entry', 'Cobro de pedido entregado')
+			`
+			tx.Exec(ctx, auditQuery, reqBody.DriverID, reqBody.OrderID, totalAmount)
 			log.Printf("[Driver WALLET OK] Cartera de %s incrementada en $%.2f", reqBody.DriverID, totalAmount)
 		}
 	}
 
-	log.Printf("[Driver] Orden %s entregada por %s. Evidencia: %s", reqBody.OrderID, reqBody.DriverID, reqBody.EvidenceURL)
+	if err := tx.Commit(ctx); err != nil {
+		http.Error(w, "Error finalizando transacción", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("[Driver] Orden %s entregada. Evidencia: %s", reqBody.OrderID, reqBody.EvidenceURL)
 
 	// Notificar al cliente vía WhatsApp
 	if customerPhone != "" {
 		go func(phone, evidenceURL string) {
 			msg := fmt.Sprintf("✅ ¡Tu pedido ha sido entregado! Puedes ver la evidencia fotográfica aquí: %s", evidenceURL)
-			if sendErr := s.metaClient.SendTextMessage(context.Background(), phone, msg); sendErr != nil {
-				log.Printf("[WhatsApp API OUTBOUND ERR] (Delivery Confirmation): %v", sendErr)
-			}
+			s.metaClient.SendTextMessage(context.Background(), phone, msg)
 		}(customerPhone, reqBody.EvidenceURL)
 	}
 
