@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"solidbit/pkg/core"
+
 	"github.com/stripe/stripe-go/v78"
 	"github.com/stripe/stripe-go/v78/checkout/session"
 )
@@ -12,16 +14,18 @@ import (
 type StripeClient struct {
 	secretKey string
 	appURL    string
+	monitor   *core.ApiMonitor
 }
 
 // NewStripeClient inicializa el cliente inyectando la llave secreta
-func NewStripeClient(secretKey, appURL string) *StripeClient {
+func NewStripeClient(secretKey, appURL string, monitor *core.ApiMonitor) *StripeClient {
 	// Initialize global Stripe configuration
 	stripe.Key = secretKey
 
 	return &StripeClient{
 		secretKey: secretKey,
 		appURL:    appURL,
+		monitor:   monitor,
 	}
 }
 
@@ -59,8 +63,11 @@ func (s *StripeClient) CreatePaymentLink(ctx context.Context, orderID string, am
 	// Ejecución asíncrona pero manejada internamente por la librería de Stripe
 	sess, err := session.New(params)
 	if err != nil {
+		if s.monitor != nil { s.monitor.RecordError("Stripe API", err) }
 		return "", fmt.Errorf("fallo la generación del PaymentLink en Stripe: %w", err)
 	}
+
+	if s.monitor != nil { s.monitor.RecordSuccess("Stripe API") }
 
 	return sess.URL, nil
 }

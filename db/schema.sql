@@ -71,6 +71,14 @@ CREATE TABLE tracking_history (
     recorded_at TIMESTAMPTZ DEFAULT now()
 );
 
+-- Tabla: Frontend Errors (Alertas de interfaz)
+CREATE TABLE frontend_errors (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    error_message TEXT NOT NULL,
+    error_stack TEXT,
+    created_at TIMESTAMPTZ DEFAULT now()
+);
+
 
 -- =========================================================================
 -- 2. ÍNDICES GEOGRÁFICOS (CRÍTICO PARA RENDIMIENTO)
@@ -148,6 +156,15 @@ ALTER TABLE drivers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
 ALTER TABLE merchants ENABLE ROW LEVEL SECURITY;
 ALTER TABLE tracking_history ENABLE ROW LEVEL SECURITY;
+ALTER TABLE frontend_errors ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "Allow anon insert to frontend_errors"
+ON frontend_errors FOR INSERT
+WITH CHECK (true);
+
+CREATE POLICY "Allow read for auth users frontend_errors"
+ON frontend_errors FOR SELECT
+USING (auth.uid() IS NOT NULL);
 
 
 -- POLÍTICAS: REPARTIDORES (DRIVERS)

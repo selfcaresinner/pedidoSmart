@@ -16,6 +16,7 @@ type WorkerPool struct {
 	tasks       chan Task
 	wg          sync.WaitGroup
 	concurrency int
+	AlertFunc   func(err interface{})
 }
 
 // NewWorkerPool emite una nueva instancia permitiéndole a la aplicación definir sus límites técnicos.
@@ -53,11 +54,21 @@ func (wp *WorkerPool) Start(ctx context.Context) {
 					
 					// Ejecusión en jaula de seguridad.
 					// Si hay un error, el logueo predeterminado notifica, pero no tumba al Daemon.
-					if err := task(ctx); err != nil {
-						// Aplicación del Standard: En sistemas de alto rendimiento, el logging debe
-						// capturar la traza pero NO romper el loop.
-						log.Printf("[SolidBit Worker %d][ERROR] Fallo en la tarea: %v\n", workerID, err)
-					}
+					func() {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("[SolidBit Worker %d][PANIC] Recuperado de panic en tarea: %v\n", workerID, r)
+								if wp.AlertFunc != nil {
+									wp.AlertFunc(r)
+								}
+							}
+						}()
+						if err := task(ctx); err != nil {
+							// Aplicación del Standard: En sistemas de alto rendimiento, el logging debe
+							// capturar la traza pero NO romper el loop.
+							log.Printf("[SolidBit Worker %d][ERROR] Fallo en la tarea: %v\n", workerID, err)
+						}
+					}()
 				}
 			}
 		}(i)

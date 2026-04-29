@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"solidbit/pkg/core"
 )
 
 // OrderData es el contrato de salida JSON de la IA.
@@ -21,14 +23,16 @@ type OrderData struct {
 // AIParser comunica con Gemini.
 // Optamos por un cliente HTTP nativo para evitar dependencias extra (Zero-Dep) y tener control absoluto sobre latencia y fallos.
 type AIParser struct {
-	APIKey string
-	Client *http.Client
+	APIKey  string
+	Client  *http.Client
+	monitor *core.ApiMonitor
 }
 
 // NewAIParser inicializa el analizador con un Timeout estricto (Fail-Fast)
-func NewAIParser(apiKey string) *AIParser {
+func NewAIParser(apiKey string, monitor *core.ApiMonitor) *AIParser {
 	return &AIParser{
-		APIKey: apiKey,
+		APIKey:  apiKey,
+		monitor: monitor,
 		Client: &http.Client{
 			Timeout: 15 * time.Second, // Timeout para no acumular goroutines bloqueadas
 		},
@@ -79,9 +83,16 @@ REGLAS ESTRICTAS:
 
 	res, err := p.Client.Do(req)
 	if err != nil {
+		if p.monitor != nil { p.monitor.RecordError("Gemini API", err) }
 		return nil, fmt.Errorf("falla de red comunicando con IA: %w", err)
 	}
 	defer res.Body.Close()
+
+	if res.StatusCode >= 500 {
+		if p.monitor != nil { p.monitor.RecordError("Gemini API", fmt.Errorf("HTTP %d", res.StatusCode)) }
+	} else if p.monitor != nil {
+		p.monitor.RecordSuccess("Gemini API")
+	}
 
 	if res.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(res.Body)

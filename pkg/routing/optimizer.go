@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"solidbit/pkg/core"
 )
 
 type Location struct {
@@ -24,14 +26,16 @@ type OrderData struct {
 
 // RoutingClient se encarga de llamar a Google Routes/Directions API para optimizar secuencias
 type RoutingClient struct {
-	apiKey string
-	http   *http.Client
-	cache  sync.Map // caché simple en memoria
+	apiKey  string
+	http    *http.Client
+	cache   sync.Map // caché simple en memoria
+	monitor *core.ApiMonitor
 }
 
-func NewRoutingClient(apiKey string) *RoutingClient {
+func NewRoutingClient(apiKey string, monitor *core.ApiMonitor) *RoutingClient {
 	return &RoutingClient{
-		apiKey: apiKey,
+		apiKey:  apiKey,
+		monitor: monitor,
 		http: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -83,9 +87,16 @@ func (c *RoutingClient) OptimizeSequence(ctx context.Context, driverLoc Location
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	res, err := c.http.Do(req)
 	if err != nil {
+		if c.monitor != nil { c.monitor.RecordError("Google Maps Routing API", err) }
 		return nil, fmt.Errorf("error HTTP en Directions API: %w", err)
 	}
 	defer res.Body.Close()
+
+	if res.StatusCode >= 500 {
+		if c.monitor != nil { c.monitor.RecordError("Google Maps Routing API", fmt.Errorf("HTTP %d", res.StatusCode)) }
+	} else if c.monitor != nil {
+		c.monitor.RecordSuccess("Google Maps Routing API")
+	}
 
 	var apiResp struct {
 		Status string `json:"status"`
@@ -135,9 +146,16 @@ func (c *RoutingClient) GetDistanceMeters(ctx context.Context, origin, dest Loca
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, reqURL.String(), nil)
 	res, err := c.http.Do(req)
 	if err != nil {
+		if c.monitor != nil { c.monitor.RecordError("Google Maps Routing API", err) }
 		return 0, fmt.Errorf("error HTTP consultando distancia en Directions API: %w", err)
 	}
 	defer res.Body.Close()
+	
+	if res.StatusCode >= 500 {
+		if c.monitor != nil { c.monitor.RecordError("Google Maps Routing API", fmt.Errorf("HTTP %d", res.StatusCode)) }
+	} else if c.monitor != nil {
+		c.monitor.RecordSuccess("Google Maps Routing API")
+	}
 
 	var apiResp struct {
 		Status string `json:"status"`

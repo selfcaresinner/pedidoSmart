@@ -33,15 +33,27 @@ func main() {
 		panic("[CRÍTICO SOLIDBIT] Arranque abortado. GEMINI_API_KEY requerido para motor de Ingestion.")
 	}
 
-	aiParser := ingestion.NewAIParser(geminiApiKey)
+	metaClient := messenger.NewMetaClient(cfg.WhatsAppAccessToken, cfg.WhatsAppPhoneNumberID)
 
-	geocoder := geocoding.NewClient(cfg.MapsAPIKey)
+	apiMonitor := core.NewApiMonitor(3, func(msg string) {
+		metaClient.SendTextMessage(context.Background(), cfg.AdminPhone, msg)
+	})
 
-	paymentsClient := payments.NewStripeClient(cfg.StripeSecretKey, cfg.AppURL)
+	aiParser := ingestion.NewAIParser(geminiApiKey, apiMonitor)
+
+	geocoder := geocoding.NewClient(cfg.MapsAPIKey, apiMonitor)
+
+	paymentsClient := payments.NewStripeClient(cfg.StripeSecretKey, cfg.AppURL, apiMonitor)
 
 	// 2. Patrón de Resiliencia y Control de Tráfico RAM/CPU
 	// 20 workers simultáneos (protege de ban en API gratuita IA) , Buffer de 1000 requests.
 	workerPool := core.NewWorkerPool(20, 1000)
+	
+	workerPool.AlertFunc = func(err interface{}) {
+		msg := fmt.Sprintf("🚨 ALERTA SOLIDBIT: Error crítico en el Worker de Ingesta. Detalles: %v", err)
+		go metaClient.SendTextMessage(context.Background(), cfg.AdminPhone, msg)
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -55,13 +67,15 @@ func main() {
 	}
 	defer db.Close()
 
-	routingClient := routing.NewRoutingClient(cfg.MapsAPIKey)
+	routingClient := routing.NewRoutingClient(cfg.MapsAPIKey, apiMonitor)
 
 	dispatcher := dispatch.NewDispatcher(db, workerPool, routingClient)
 	pricingEngine := pricing.NewPricingEngine()
-	metaClient := messenger.NewMetaClient(cfg.WhatsAppAccessToken, cfg.WhatsAppPhoneNumberID)
 
 	// 4. Montura de Controladores HTTP
+	healthMonitor := core.NewHealthMonitor(db, workerPool)
+	http.HandleFunc("/health", healthMonitor.HandleHealthCheck)
+	
 	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient, routingClient, pricingEngine, metaClient, cfg.AppURL)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
 	http.HandleFunc("/api/merchant/confirm", service.HandleMerchantConfirm)

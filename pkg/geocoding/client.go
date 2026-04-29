@@ -7,18 +7,22 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"solidbit/pkg/core"
 )
 
 // Client encapsula la comunicación con la API de Geocodificación para convertir direcciones.
 type Client struct {
-	apiKey string
-	http   *http.Client
+	apiKey  string
+	http    *http.Client
+	monitor *core.ApiMonitor
 }
 
 // NewClient inicializa el cliente con el estándar de timeout estricto de SolidBit.
-func NewClient(apiKey string) *Client {
+func NewClient(apiKey string, monitor *core.ApiMonitor) *Client {
 	return &Client{
-		apiKey: apiKey,
+		apiKey:  apiKey,
+		monitor: monitor,
 		http: &http.Client{
 			Timeout: 10 * time.Second, // Timeout para no bloquear a los Workers
 		},
@@ -58,9 +62,16 @@ func (c *Client) ResolveAddress(ctx context.Context, address string) (float64, f
 
 	res, err := c.http.Do(req)
 	if err != nil {
+		if c.monitor != nil { c.monitor.RecordError("Google Maps Geocoding API", err) }
 		return 0, 0, fmt.Errorf("fallo de red comunicando con Google Maps API: %w", err)
 	}
 	defer res.Body.Close()
+
+	if res.StatusCode >= 500 {
+		if c.monitor != nil { c.monitor.RecordError("Google Maps Geocoding API", fmt.Errorf("HTTP %d", res.StatusCode)) }
+	} else if c.monitor != nil {
+		c.monitor.RecordSuccess("Google Maps Geocoding API")
+	}
 
 	if res.StatusCode != http.StatusOK {
 		return 0, 0, fmt.Errorf("respuesta fallida de Maps (status HTTP %d)", res.StatusCode)
