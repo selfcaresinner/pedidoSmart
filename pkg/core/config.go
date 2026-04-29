@@ -21,6 +21,8 @@ type Config struct {
 	WhatsAppAccessToken   string
 	WhatsAppPhoneNumberID string
 	AdminPhone          string
+	SupportEmail        string
+	BusinessAddress     string
 }
 
 // LoadConfig lee las variables de entorno, de '.env', de inyecciones del sistema (Docker/K8s/Railway) y valida las claves críticas.
@@ -45,6 +47,8 @@ func LoadConfig() *Config {
 		WhatsAppAccessToken:   getEnvOrPanic("WHATSAPP_ACCESS_TOKEN"),
 		WhatsAppPhoneNumberID: getEnvOrPanic("WHATSAPP_PHONE_NUMBER_ID"),
 		AdminPhone:          getEnvOrPanic("ADMIN_PHONE"),
+		SupportEmail:        getEnvOrPanic("SUPPORT_EMAIL"),
+		BusinessAddress:     getEnvOrPanic("BUSINESS_ADDRESS"),
 	}
 
 	return cfg
@@ -60,6 +64,7 @@ func PreFlightCheck(cfg *Config) {
 	fmt.Println("✅ WHATSAPP_ACCESS_TOKEN y WHATSAPP_PHONE_NUMBER_ID provistos")
 	fmt.Println("✅ APP_URL y NEXT_PUBLIC_MAPS_API_KEY provistos")
 	fmt.Println("✅ ADMIN_PHONE provisto")
+	fmt.Println("✅ SUPPORT_EMAIL y BUSINESS_ADDRESS provistos")
 	fmt.Printf("🔥 Entorno: %s | Puerto: %s\n", strings.ToUpper(cfg.Environment), cfg.Port)
 	fmt.Println("=========================================================")
 }
