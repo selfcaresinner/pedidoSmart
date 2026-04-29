@@ -17,6 +17,7 @@ import (
 	"solidbit/pkg/admin"
 	"solidbit/pkg/routing"
 	"solidbit/pkg/pricing"
+	"solidbit/pkg/messenger"
 )
 
 func main() {
@@ -57,9 +58,10 @@ func main() {
 
 	dispatcher := dispatch.NewDispatcher(db, workerPool, routingClient)
 	pricingEngine := pricing.NewPricingEngine()
+	metaClient := messenger.NewMetaClient(cfg.WhatsAppAccessToken, cfg.WhatsAppPhoneNumberID)
 
 	// 4. Montura de Controladores HTTP
-	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient, routingClient, pricingEngine)
+	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, paymentsClient, routingClient, pricingEngine, metaClient)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
 
 	paymentsWebhook := payments.NewWebhookHandler(db, cfg.StripeWebhookSecret)
@@ -70,7 +72,7 @@ func main() {
 	http.HandleFunc("/admin/live-map", adminService.AuthMiddleware(adminService.GetActiveLiveMap))
 
 	// 5. Iniciar Monitor de Proximidad
-	proximityMonitor := notifications.NewProximityMonitor(db)
+	proximityMonitor := notifications.NewProximityMonitor(db, metaClient)
 	proximityMonitor.Start(ctx)
 
 	// 6. Servidor HTTP Asíncrono

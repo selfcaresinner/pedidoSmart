@@ -18,6 +18,8 @@ type Config struct {
 	StripeWebhookSecret string
 	AppURL              string
 	AdminPassword       string
+	WhatsAppAccessToken   string
+	WhatsAppPhoneNumberID string
 }
 
 // LoadConfig lee las variables de entorno, de '.env', de inyecciones del sistema (Docker/K8s/Railway) y valida las claves críticas.
@@ -39,6 +41,8 @@ func LoadConfig() *Config {
 		StripeWebhookSecret: getEnvOrPanic("STRIPE_WEBHOOK_SECRET"),
 		AppURL:              getEnvOrPanic("APP_URL"),
 		AdminPassword:       getEnvOrPanic("ADMIN_PASSWORD"),
+		WhatsAppAccessToken:   getEnvOrPanic("WHATSAPP_ACCESS_TOKEN"),
+		WhatsAppPhoneNumberID: getEnvOrPanic("WHATSAPP_PHONE_NUMBER_ID"),
 	}
 
 	return cfg

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Phone, MapPin, Package, CheckCircle2, Navigation, CircleDot, Clock } from 'lucide-react';
+import { Phone, MapPin, Package, CheckCircle2, Navigation, CircleDot, Clock, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleMap, useLoadScript, Marker, Polyline } from '@react-google-maps/api';
 
@@ -58,6 +58,8 @@ interface Driver {
 }
 
 export default function DashboardPage() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [accessCode, setAccessCode] = useState('');
   const [orders, setOrders] = useState<Order[]>([]);
   const [driverStatus, setDriverStatus] = useState<DriverStatus>('offline');
   const [loading, setLoading] = useState(true);
@@ -67,8 +69,30 @@ export default function DashboardPage() {
     googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || '',
   });
 
+  useEffect(() => {
+    // Check URL or LocalStorage
+    const params = new URLSearchParams(window.location.search);
+    const urlDriverId = params.get('driver_id');
+    const savedCode = localStorage.getItem('solidbit_driver_auth');
+    
+    if (urlDriverId || savedCode === process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (accessCode === process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
+      setIsAuthenticated(true);
+      localStorage.setItem('solidbit_driver_auth', accessCode);
+    } else {
+      alert("Código incorrecto");
+    }
+  };
+
   // GPS Tracking Loop
   useEffect(() => {
+    if (!isAuthenticated) return;
     let interval: NodeJS.Timeout;
 
     if (orders.length > 0 && navigator.geolocation) {
@@ -109,6 +133,8 @@ export default function DashboardPage() {
   }, [orders]);
 
   useEffect(() => {
+    if (!isAuthenticated) return;
+
     // 1. Obtener estado inicial
     fetchInitialData();
 
@@ -214,6 +240,32 @@ export default function DashboardPage() {
     // MOCK: Aquí ejecutaría un update a la DB
     setDriverStatus(nextStatus);
   };
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center font-sans text-gray-900 p-4">
+        <form onSubmit={handleLogin} className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-100 max-w-sm w-full">
+          <div className="flex justify-center mb-6">
+            <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
+              <Lock className="w-6 h-6" />
+            </div>
+          </div>
+          <h1 className="text-xl md:text-2xl font-bold text-center mb-2">Acceso Repartidores</h1>
+          <p className="text-gray-500 text-sm text-center mb-6">Ingresa el código de acceso general para ver tu ruta.</p>
+          <input 
+            type="password"
+            value={accessCode}
+            onChange={(e)=>setAccessCode(e.target.value)}
+            className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            placeholder="Código de acceso"
+          />
+          <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl transition hover:bg-indigo-700">
+            Entrar
+          </button>
+        </form>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-900 pb-20">

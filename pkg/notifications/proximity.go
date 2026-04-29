@@ -6,17 +6,20 @@ import (
 	"time"
 
 	"solidbit/pkg/core"
+	"solidbit/pkg/messenger"
 )
 
 // ProximityMonitor supervisa la ubicación de los repartidores y envía alertas de geofence.
 type ProximityMonitor struct {
 	db *core.DBWrapper
+	metaClient *messenger.MetaClient
 }
 
 // NewProximityMonitor inicializa el monitor.
-func NewProximityMonitor(db *core.DBWrapper) *ProximityMonitor {
+func NewProximityMonitor(db *core.DBWrapper, metaClient *messenger.MetaClient) *ProximityMonitor {
 	return &ProximityMonitor{
 		db: db,
+		metaClient: metaClient,
 	}
 }
 
@@ -75,9 +78,15 @@ func (m *ProximityMonitor) checkProximity(ctx context.Context) {
 
 	// 2. Procesamos las alertas encontradas
 	for _, alert := range alerts {
-		// Mock de integración con Meta API WhatsApp
-		// En un entorno productivo se inyectaría un Http.Client hacia Meta.
-		log.Printf("[WhatsApp API OUTBOUND] Enviando a %s: '¡Hola! Tu repartidor de SolidBit está a punto de llegar con tu pedido.' (Distancia actual: %.1f m)", alert.CustomerPhone, alert.DistanceM)
+		// Envío real con integración Meta API WhatsApp
+		go func(phone string) {
+			msg := "¡Hola! Tu repartidor de SolidBit está a menos de 300m y llegará pronto."
+			if err := m.metaClient.SendTextMessage(context.Background(), phone, msg); err != nil {
+				log.Printf("[WhatsApp API OUTBOUND ERR] Fallo al enviar alerta proximidad a %s: %v", phone, err)
+			} else {
+				log.Printf("[WhatsApp API OUTBOUND] Enviado alerta de proximidad a %s", phone)
+			}
+		}(alert.CustomerPhone)
 
 		// Actualizamos de forma atómica la DB para que no suene dos veces.
 		updateQuery := `UPDATE orders SET proximity_notified = TRUE, updated_at = now() WHERE id = $1 AND proximity_notified = FALSE`

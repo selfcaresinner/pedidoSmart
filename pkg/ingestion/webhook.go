@@ -13,6 +13,7 @@ import (
 	"solidbit/pkg/payments"
 	"solidbit/pkg/pricing"
 	"solidbit/pkg/routing"
+	"solidbit/pkg/messenger"
 )
 
 // MetaWebhook payload simplificado para extraer mensajes de WhatsApp Business API.
@@ -41,9 +42,10 @@ type IngestionService struct {
 	payments   *payments.StripeClient
 	routing    *routing.RoutingClient
 	pricing    *pricing.PricingEngine
+	metaClient *messenger.MetaClient
 }
 
-func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, paymentsClient *payments.StripeClient, routingClient *routing.RoutingClient, pricingEngine *pricing.PricingEngine) *IngestionService {
+func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, paymentsClient *payments.StripeClient, routingClient *routing.RoutingClient, pricingEngine *pricing.PricingEngine, metaClient *messenger.MetaClient) *IngestionService {
 	return &IngestionService{
 		pool:       pool,
 		parser:     parser,
@@ -53,6 +55,7 @@ func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWra
 		payments:   paymentsClient,
 		routing:    routingClient,
 		pricing:    pricingEngine,
+		metaClient: metaClient,
 	}
 }
 
@@ -186,6 +189,16 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 		if err != nil {
 			log.Printf("[Pagos WARN] No se guardo metadata en la DB para Pedido [%s]: %v", orderID, err)
 		}
+
+		// Enviar WhatsApp al cliente
+		go func() {
+			msg := fmt.Sprintf("¡Pedido confirmado! Puedes pagar aquí: %s", stripeLink)
+			if sendErr := s.metaClient.SendTextMessage(context.Background(), numEnvio, msg); sendErr != nil {
+				log.Printf("[WhatsApp API OUTBOUND ERR] %v", sendErr)
+			} else {
+				log.Printf("[WhatsApp API OUTBOUND] Link de pago enviado a %s", numEnvio)
+			}
+		}()
 	}
 
 	// Activación Asíncrona (Background Pool) del Motor Geográfico PostGIS
