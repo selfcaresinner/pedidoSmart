@@ -248,7 +248,7 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 	return nil
 }
 
-const PLATFORM_COMMISSION_PERCENT = 0.20
+const PLATFORM_COMMISSION_PERCENT = 0.30
 
 func (s *IngestionService) HandleOrderStatusUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
@@ -360,7 +360,7 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 				DO UPDATE SET cash_on_hand = driver_wallets.cash_on_hand + $2, total_earned = driver_wallets.total_earned + $3, updated_at = now()
 			`
 			_, err = tx.Exec(ctx, walletQuery, reqBody.DriverID, totalAmount, driverEarnings)
-			auditDescription = 'Cobro de pedido entregado en efectivo'
+			auditDescription = fmt.Sprintf("Cobro de pedido entregado en efectivo (Ganancia: $%.2f, Comisión: $%.2f)", driverEarnings, platformFee)
 			auditType = "entry"
 			amountToRegister = totalAmount
 		} else {
@@ -372,9 +372,9 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 				DO UPDATE SET total_earned = driver_wallets.total_earned + $2, updated_at = now()
 			`
 			_, err = tx.Exec(ctx, walletQuery, reqBody.DriverID, driverEarnings)
-			auditDescription = 'Pedido entregado mediante transferencia (ganancia acreditada)'
+			auditDescription = fmt.Sprintf("Pedido entregado mediante transferencia (Ganancia: $%.2f, Comisión: $%.2f)", driverEarnings, platformFee)
 			auditType = "entry"
-			amountToRegister = 0 // Wait, what enters the wallet? Nothing in cash_on_hand
+			amountToRegister = driverEarnings // Registramos la ganancia acumulada
 		}
 
 		if err != nil {
