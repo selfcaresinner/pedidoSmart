@@ -4,7 +4,7 @@ import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { motion } from 'motion/react';
 import { 
-  Building2, LineChart, Wallet, DollarSign, PackageCheck, Users, Box, Navigation
+  Building2, LineChart, Wallet, DollarSign, PackageCheck, Users, Box, Navigation, Wrench
 } from 'lucide-react';
 import { GoogleMap, useLoadScript, Marker } from '@react-google-maps/api';
 
@@ -14,6 +14,8 @@ interface Metrics {
   total_cash: number;
   total_settled: number;
   net_profit: number;
+  pure_profit: number;
+  maintenance_fund: number;
   delivered_today: number;
 }
 
@@ -42,7 +44,7 @@ export default function AdminDashboardPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [passInput, setPassInput] = useState("");
 
-  const [metrics, setMetrics] = useState<Metrics>({ total_transfers: 0, total_cash: 0, total_settled: 0, net_profit: 0, delivered_today: 0 });
+  const [metrics, setMetrics] = useState<Metrics>({ total_transfers: 0, total_cash: 0, total_settled: 0, net_profit: 0, pure_profit: 0, maintenance_fund: 0, delivered_today: 0 });
   const [drivers, setDrivers] = useState<PerformanceDriver[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [liveMapData, setLiveMapData] = useState<{ active_orders: any[], active_drivers: any[] }>({ active_orders: [], active_drivers: [] });
@@ -218,10 +220,17 @@ export default function AdminDashboardPage() {
           </h2>
           
           <div className="grid grid-cols-2 gap-4">
-            <motion.div initial={{opacity:0, y: 10}} animate={{opacity:1, y:0}} className="bg-indigo-900 p-4 rounded-2xl shadow-sm border border-indigo-800 col-span-2">
-               <div className="text-indigo-300 mb-2"><Building2 className="w-5 h-5"/></div>
-               <p className="text-xs text-indigo-300 font-semibold mb-1">PROFIT NETO PLATAFORMA</p>
-               <h3 className="text-2xl font-bold text-white">${metrics.net_profit?.toFixed(2) || '0.00'}</h3>
+            <motion.div initial={{opacity:0, y: 10}} animate={{opacity:1, y:0}} className="bg-indigo-900 p-4 rounded-2xl shadow-sm border border-indigo-800 col-span-2 flex flex-col sm:flex-row justify-between sm:items-end gap-4">
+               <div>
+                 <div className="text-indigo-300 mb-2"><Building2 className="w-5 h-5"/></div>
+                 <p className="text-xs text-indigo-300 font-semibold mb-1">PROFIT PURO PLATAFORMA (Libre)</p>
+                 <h3 className="text-2xl font-bold text-white">${metrics.pure_profit?.toFixed(2) || '0.00'}</h3>
+               </div>
+               <div className="sm:text-right border-t border-indigo-800 sm:border-t-0 sm:border-l sm:pl-4 pt-4 sm:pt-0">
+                 <div className="text-rose-300 mb-2 sm:ml-auto"><Wrench className="w-5 h-5"/></div>
+                 <p className="text-xs text-rose-300 font-semibold mb-1">FONDO DE MANTENIMIENTO</p>
+                 <h3 className="text-xl font-bold text-rose-100">${metrics.maintenance_fund?.toFixed(2) || '0.00'}</h3>
+               </div>
             </motion.div>
             <motion.div initial={{opacity:0, y: 10}} animate={{opacity:1, y:0}} className="bg-white p-4 rounded-2xl shadow-sm border border-gray-100">
                <div className="text-gray-400 mb-2"><Wallet className="w-5 h-5"/></div>

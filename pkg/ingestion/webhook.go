@@ -364,15 +364,15 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 			auditType = "entry"
 			amountToRegister = totalAmount
 		} else {
-			// El repartidor no recibe efectivo: Solo aumentan sus ganancias (total_earned) y reducimos cash_on_hand hipotéticamente o solo mantenemos total_earned actualizándose
+			// El repartidor no recibe efectivo: Solo aumentan sus ganancias (total_earned) y reducimos cash_on_hand hipotéticamente
 			walletQuery = `
-				INSERT INTO driver_wallets (driver_id, total_earned, updated_at)
-				VALUES ($1, $2, now())
+				INSERT INTO driver_wallets (driver_id, cash_on_hand, total_earned, updated_at)
+				VALUES ($1, -$2, $2, now())
 				ON CONFLICT (driver_id) 
-				DO UPDATE SET total_earned = driver_wallets.total_earned + $2, updated_at = now()
+				DO UPDATE SET cash_on_hand = driver_wallets.cash_on_hand - $2, total_earned = driver_wallets.total_earned + $2, updated_at = now()
 			`
 			_, err = tx.Exec(ctx, walletQuery, reqBody.DriverID, driverEarnings)
-			auditDescription = fmt.Sprintf("Pedido entregado mediante transferencia (Ganancia: $%.2f, Comisión: $%.2f)", driverEarnings, platformFee)
+			auditDescription = fmt.Sprintf("Pedido entregado mediante transferencia (Ganancia: $%.2f, Comisión: $%.2f). Reducción de deuda.", driverEarnings, platformFee)
 			auditType = "entry"
 			amountToRegister = driverEarnings // Registramos la ganancia acumulada
 		}
@@ -380,15 +380,15 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 		if err != nil {
 			log.Printf("[Driver WALLET ERR] No se pudo actualizar cartera para driver %s: %v", reqBody.DriverID, err)
 		} else {
+			auditQuery := `
+				INSERT INTO wallet_transactions (wallet_id, order_id, amount, transaction_type, description)
+				VALUES ($1, $2, $3, $4, $5)
+			`
+			tx.Exec(ctx, auditQuery, reqBody.DriverID, reqBody.OrderID, amountToRegister, auditType, auditDescription)
 			if paymentMethod == "cash" {
-				auditQuery := `
-					INSERT INTO wallet_transactions (wallet_id, order_id, amount, transaction_type, description)
-					VALUES ($1, $2, $3, $4, $5)
-				`
-				tx.Exec(ctx, auditQuery, reqBody.DriverID, reqBody.OrderID, amountToRegister, auditType, auditDescription)
 				log.Printf("[Driver WALLET OK] Cartera de %s incrementada en efectivo $%.2f. Ganancia neta: $%.2f", reqBody.DriverID, totalAmount, driverEarnings)
 			} else {
-				log.Printf("[Driver WALLET OK] Cartera de %s actualizada con ganancia neta de $%.2f", reqBody.DriverID, driverEarnings)
+				log.Printf("[Driver WALLET OK] Cartera de %s actualizada con ganancia neta de $%.2f. Deuda reducida.", reqBody.DriverID, driverEarnings)
 			}
 		}
 	}

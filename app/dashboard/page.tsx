@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Phone, MapPin, Package, CheckCircle2, Navigation, CircleDot, Clock, Lock, Camera, Loader2 } from 'lucide-react';
+import { Phone, MapPin, Package, CheckCircle2, Navigation, CircleDot, Clock, Lock, Camera, Loader2, Box } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { GoogleMap, useLoadScript, Marker, Polyline } from '@react-google-maps/api';
 
@@ -71,6 +71,7 @@ export default function DashboardPage() {
   const [driverStatus, setDriverStatus] = useState<DriverStatus>('offline');
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deliveredTodayCount, setDeliveredTodayCount] = useState<number>(0);
   const [driverLocation, setDriverLocation] = useState<{lat: number, lng: number} | null>(null);
   const [uploading, setUploading] = useState<string | null>(null); // orderId being uploaded
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -182,6 +183,18 @@ export default function DashboardPage() {
       
       setWallet(walletData as Wallet);
       setDriverStatus(driverData.status as DriverStatus);
+
+      // 4. Obtener Entregas de Hoy
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const { count: deliveredCount } = await supabase
+        .from('orders')
+        .select('*', { count: 'exact', head: true })
+        .eq('driver_id', driverData.id)
+        .eq('status', 'delivered')
+        .gte('updated_at', today.toISOString());
+        
+      setDeliveredTodayCount(deliveredCount || 0);
 
     } catch (error) {
       console.error("[SolidBit][UI] Error fetching init data:", error);
@@ -413,6 +426,28 @@ export default function DashboardPage() {
 
       {/* Main Content (Mobile First) */}
       <main className="flex-1 px-4 py-6 max-w-lg mx-auto w-full">
+        
+        {/* Resumen de Jornada */}
+        <details className="mb-6 bg-white border border-gray-200 rounded-2xl group overflow-hidden">
+           <summary className="flex items-center justify-between p-4 cursor-pointer font-bold text-gray-800 list-none [&::-webkit-details-marker]:hidden">
+              <div className="flex items-center gap-2">
+                 <Box className="w-5 h-5 text-indigo-600" />
+                 <span>Resumen de mi Jornada</span>
+              </div>
+              <span className="text-gray-400 group-open:rotate-180 transition-transform">▼</span>
+           </summary>
+           <div className="p-4 border-t border-gray-100 bg-gray-50 flex justify-between">
+              <div>
+                 <p className="text-[10px] text-gray-500 font-bold mb-1">PEDIDOS ENTREGADOS HOY</p>
+                 <p className="text-xl font-black text-gray-900">{deliveredTodayCount}</p>
+              </div>
+              <div className="text-right">
+                 <p className="text-[10px] text-gray-500 font-bold mb-1">TOTAL GANADO HOY</p>
+                 <p className="text-xl font-black text-emerald-600">${wallet?.total_earned?.toFixed(2) || '0.00'}</p>
+              </div>
+           </div>
+        </details>
+
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold text-gray-800">Tus Rutas Activas</h2>
           <span className="text-xs font-bold bg-indigo-100 text-indigo-700 px-2 py-1 rounded-md">

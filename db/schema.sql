@@ -262,5 +262,7 @@ SELECT
     (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'cash' AND status IN ('delivered')) AS total_cash,
     (SELECT COALESCE(SUM(amount), 0) FROM settlements) AS total_settled,
     (SELECT COALESCE(SUM(platform_fee), 0) FROM orders WHERE status = 'delivered') AS net_profit,
-    (SELECT COUNT(*) FROM orders WHERE status = 'delivered' AND DATE(updated_at) = CURRENT_DATE) AS delivered_today;
+    (SELECT COUNT(*) FROM orders WHERE status = 'delivered' AND DATE(updated_at) = CURRENT_DATE) AS delivered_today,
+    ((SELECT COUNT(*) FROM orders WHERE status = 'delivered') * 10) AS pure_profit,
+    ((SELECT COUNT(*) FROM orders WHERE status = 'delivered') * 2) AS maintenance_fund;
 
