@@ -28,6 +28,7 @@ interface Order {
 interface Wallet {
   driver_id: string;
   cash_on_hand: number;
+  total_earned: number;
   updated_at: string;
 }
 
@@ -386,8 +387,13 @@ export default function DashboardPage() {
         <div>
           <h1 className="text-xl font-bold tracking-tight text-gray-950">SolidBit</h1>
           {wallet && (
-              <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full mt-0.5">
-                  POR LIQUIDAR: ${wallet.cash_on_hand.toFixed(2)}
+              <div className="flex flex-col gap-1 mt-1">
+                <div className="inline-flex w-fit items-center gap-1 text-[10px] font-bold text-orange-600 bg-orange-50 border border-orange-100 px-2 py-0.5 rounded-full">
+                    EFECTIVO POR ENTREGAR: ${wallet.cash_on_hand?.toFixed(2) || '0.00'}
+                </div>
+                <div className="inline-flex w-fit items-center gap-1 text-[10px] font-bold text-emerald-600 bg-emerald-50 border border-emerald-100 px-2 py-0.5 rounded-full">
+                    MIS GANANCIAS DEL DÍA: ${wallet.total_earned?.toFixed(2) || '0.00'}
+                </div>
               </div>
           )}
         </div>

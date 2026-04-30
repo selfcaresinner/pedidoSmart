@@ -248,6 +248,8 @@ func (s *IngestionService) processOrder(ctx context.Context, numEnvio, texto str
 	return nil
 }
 
+const PLATFORM_COMMISSION_PERCENT = 0.20
+
 func (s *IngestionService) HandleOrderStatusUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -315,42 +317,79 @@ func (s *IngestionService) HandleDriverComplete(w http.ResponseWriter, r *http.R
 	}
 	defer tx.Rollback(ctx)
 
+	// Obtener el totalAmount para calcular comisiones
+	var totalAmount float64
+	err = tx.QueryRow(ctx, "SELECT total_amount FROM orders WHERE id = $1", reqBody.OrderID).Scan(&totalAmount)
+	if err != nil {
+		log.Printf("[Driver] Error obteniendo orden %s: %v", reqBody.OrderID, err)
+		http.Error(w, "Error obteniendo orden", http.StatusInternalServerError)
+		return
+	}
+
+	platformFee := totalAmount * PLATFORM_COMMISSION_PERCENT
+	driverEarnings := totalAmount - platformFee
+
 	// Actualizar la orden
 	var customerPhone string
-	var totalAmount float64
 	var paymentMethod string
 	query := `
 		UPDATE orders 
-		SET status = 'delivered', delivery_evidence_url = $1, updated_at = now() 
-		WHERE id = $2 
-		RETURNING customer_phone, total_amount, payment_method
+		SET status = 'delivered', delivery_evidence_url = $1, platform_fee = $2, driver_fee = $3, updated_at = now() 
+		WHERE id = $4 
+		RETURNING customer_phone, payment_method
 	`
-	err = tx.QueryRow(ctx, query, reqBody.EvidenceURL, reqBody.OrderID).Scan(&customerPhone, &totalAmount, &paymentMethod)
+	err = tx.QueryRow(ctx, query, reqBody.EvidenceURL, platformFee, driverEarnings, reqBody.OrderID).Scan(&customerPhone, &paymentMethod)
 	if err != nil {
 		log.Printf("[Driver] Error completando orden %s: %v", reqBody.OrderID, err)
 		http.Error(w, "Error completando orden", http.StatusInternalServerError)
 		return
 	}
 
-	// Actualizar Cartera y Auditoría si es efectivo
-	if paymentMethod == "cash" && reqBody.DriverID != "unknown" {
-		walletQuery := `
-			INSERT INTO driver_wallets (driver_id, cash_on_hand, updated_at)
-			VALUES ($1, $2, now())
-			ON CONFLICT (driver_id) 
-			DO UPDATE SET cash_on_hand = driver_wallets.cash_on_hand + $2, updated_at = now()
-		`
-		_, err := tx.Exec(ctx, walletQuery, reqBody.DriverID, totalAmount)
+	if reqBody.DriverID != "unknown" {
+		var walletQuery string
+		var auditDescription string
+		var auditType string
+		var amountToRegister float64
+
+		if paymentMethod == "cash" {
+			// El repartidor recibe efectivo: Aumenta cash_on_hand por TODO el pago, pero sus ganancias suben por driverEarnings
+			walletQuery = `
+				INSERT INTO driver_wallets (driver_id, cash_on_hand, total_earned, updated_at)
+				VALUES ($1, $2, $3, now())
+				ON CONFLICT (driver_id) 
+				DO UPDATE SET cash_on_hand = driver_wallets.cash_on_hand + $2, total_earned = driver_wallets.total_earned + $3, updated_at = now()
+			`
+			_, err = tx.Exec(ctx, walletQuery, reqBody.DriverID, totalAmount, driverEarnings)
+			auditDescription = 'Cobro de pedido entregado en efectivo'
+			auditType = "entry"
+			amountToRegister = totalAmount
+		} else {
+			// El repartidor no recibe efectivo: Solo aumentan sus ganancias (total_earned) y reducimos cash_on_hand hipotéticamente o solo mantenemos total_earned actualizándose
+			walletQuery = `
+				INSERT INTO driver_wallets (driver_id, total_earned, updated_at)
+				VALUES ($1, $2, now())
+				ON CONFLICT (driver_id) 
+				DO UPDATE SET total_earned = driver_wallets.total_earned + $2, updated_at = now()
+			`
+			_, err = tx.Exec(ctx, walletQuery, reqBody.DriverID, driverEarnings)
+			auditDescription = 'Pedido entregado mediante transferencia (ganancia acreditada)'
+			auditType = "entry"
+			amountToRegister = 0 // Wait, what enters the wallet? Nothing in cash_on_hand
+		}
+
 		if err != nil {
 			log.Printf("[Driver WALLET ERR] No se pudo actualizar cartera para driver %s: %v", reqBody.DriverID, err)
 		} else {
-			// Auditoría de Transacción
-			auditQuery := `
-				INSERT INTO wallet_transactions (wallet_id, order_id, amount, transaction_type, description)
-				VALUES ($1, $2, $3, 'entry', 'Cobro de pedido entregado')
-			`
-			tx.Exec(ctx, auditQuery, reqBody.DriverID, reqBody.OrderID, totalAmount)
-			log.Printf("[Driver WALLET OK] Cartera de %s incrementada en $%.2f", reqBody.DriverID, totalAmount)
+			if paymentMethod == "cash" {
+				auditQuery := `
+					INSERT INTO wallet_transactions (wallet_id, order_id, amount, transaction_type, description)
+					VALUES ($1, $2, $3, $4, $5)
+				`
+				tx.Exec(ctx, auditQuery, reqBody.DriverID, reqBody.OrderID, amountToRegister, auditType, auditDescription)
+				log.Printf("[Driver WALLET OK] Cartera de %s incrementada en efectivo $%.2f. Ganancia neta: $%.2f", reqBody.DriverID, totalAmount, driverEarnings)
+			} else {
+				log.Printf("[Driver WALLET OK] Cartera de %s actualizada con ganancia neta de $%.2f", reqBody.DriverID, driverEarnings)
+			}
 		}
 	}
 

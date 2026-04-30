@@ -53,6 +53,8 @@ CREATE TABLE orders (
     payment_method payment_method DEFAULT 'cash',
     payment_status payment_status DEFAULT 'pending',
     total_amount NUMERIC(10, 2) DEFAULT 0.00,
+    platform_fee NUMERIC(10, 2) DEFAULT 0.00,
+    driver_fee NUMERIC(10, 2) DEFAULT 0.00,
     price_breakdown JSONB,
     delivery_sequence_priority INT DEFAULT 0,
     proximity_notified BOOLEAN DEFAULT FALSE,
@@ -66,6 +68,7 @@ CREATE TABLE orders (
 CREATE TABLE driver_wallets (
     driver_id UUID PRIMARY KEY REFERENCES drivers(id),
     cash_on_hand NUMERIC(10, 2) DEFAULT 0.00,
+    total_earned NUMERIC(10, 2) DEFAULT 0.00,
     last_liquidation_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ DEFAULT now()
 );
@@ -258,5 +261,6 @@ SELECT
     (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'transfer' AND payment_status = 'paid') AS total_transfers,
     (SELECT COALESCE(SUM(total_amount), 0) FROM orders WHERE payment_method = 'cash' AND status IN ('delivered')) AS total_cash,
     (SELECT COALESCE(SUM(amount), 0) FROM settlements) AS total_settled,
+    (SELECT COALESCE(SUM(platform_fee), 0) FROM orders WHERE status = 'delivered') AS net_profit,
     (SELECT COUNT(*) FROM orders WHERE status = 'delivered' AND DATE(updated_at) = CURRENT_DATE) AS delivered_today;
 

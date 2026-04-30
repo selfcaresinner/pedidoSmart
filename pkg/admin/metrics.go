@@ -38,10 +38,10 @@ func (s *AdminService) AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 
 // GetGlobalMetrics obtiene la sumatoria de ingresos de la Vista admin_metrics
 func (s *AdminService) GetGlobalMetrics(w http.ResponseWriter, r *http.Request) {
-	query := `SELECT total_transfers, total_cash, total_settled, delivered_today FROM admin_metrics`
-	var transfers, cash, settled float64
+	query := `SELECT total_transfers, total_cash, total_settled, net_profit, delivered_today FROM admin_metrics`
+	var transfers, cash, settled, netProfit float64
 	var delivered int
-	err := s.db.Pool.QueryRow(r.Context(), query).Scan(&transfers, &cash, &settled, &delivered)
+	err := s.db.Pool.QueryRow(r.Context(), query).Scan(&transfers, &cash, &settled, &netProfit, &delivered)
 	if err != nil {
 		log.Printf("[Admin API ERR] Fallo consultando admin_metrics: %v", err)
 		http.Error(w, "Error interno en metricas", http.StatusInternalServerError)
@@ -53,6 +53,7 @@ func (s *AdminService) GetGlobalMetrics(w http.ResponseWriter, r *http.Request) 
 		"total_transfers": transfers,
 		"total_cash":      cash,
 		"total_settled":   settled,
+		"net_profit":      netProfit,
 		"delivered_today": delivered,
 	})
 }
