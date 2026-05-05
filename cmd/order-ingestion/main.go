@@ -13,8 +13,8 @@ import (
 	"solidbit/pkg/dispatch"
 	"solidbit/pkg/geocoding"
 	"solidbit/pkg/ingestion"
-	"solidbit/pkg/notifications"
 	"solidbit/pkg/admin"
+	"solidbit/pkg/notifications"
 	"solidbit/pkg/routing"
 	"solidbit/pkg/pricing"
 	"solidbit/pkg/messenger"
@@ -73,6 +73,14 @@ func main() {
 	// 4. Montura de Controladores HTTP
 	healthMonitor := core.NewHealthMonitor(db, workerPool)
 	http.HandleFunc("/health", healthMonitor.HandleHealthCheck)
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"status": "online", "service": "SolidBit Order Ingestion Engine"}`))
+	})
 	
 	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, routingClient, pricingEngine, metaClient, cfg.AppURL, cfg.WhatsAppVerifyToken)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
