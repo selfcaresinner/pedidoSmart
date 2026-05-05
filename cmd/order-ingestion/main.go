@@ -73,7 +73,7 @@ func main() {
 	healthMonitor := core.NewHealthMonitor(db, workerPool)
 	http.HandleFunc("/health", healthMonitor.HandleHealthCheck)
 	
-	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, routingClient, pricingEngine, metaClient, cfg.AppURL)
+	service := ingestion.NewIngestionService(workerPool, aiParser, db, dispatcher, geocoder, routingClient, pricingEngine, metaClient, cfg.AppURL, cfg.WhatsAppVerifyToken)
 	http.HandleFunc("/webhook/meta/inbound", service.HandleMetaWebhook)
 	http.HandleFunc("/api/driver/complete", service.HandleDriverComplete)
 	http.HandleFunc("/api/order/status", service.HandleOrderStatusUpdate)

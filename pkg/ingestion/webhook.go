@@ -37,30 +37,50 @@ type IngestionService struct {
 	parser     *AIParser
 	db         *core.DBWrapper
 	dispatcher *dispatch.Dispatcher
-	geocoder   *geocoding.Client
-	routing    *routing.RoutingClient
-	pricing    *pricing.PricingEngine
-	metaClient *messenger.MetaClient
-	appURL     string
+	geocoder     *geocoding.Client
+	routing      *routing.RoutingClient
+	pricing      *pricing.PricingEngine
+	metaClient   *messenger.MetaClient
+	appURL       string
+	verifyToken  string
 }
 
-func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, routingClient *routing.RoutingClient, pricingEngine *pricing.PricingEngine, metaClient *messenger.MetaClient, appURL string) *IngestionService {
+func NewIngestionService(pool *core.WorkerPool, parser *AIParser, db *core.DBWrapper, dispatcher *dispatch.Dispatcher, geocoder *geocoding.Client, routingClient *routing.RoutingClient, pricingEngine *pricing.PricingEngine, metaClient *messenger.MetaClient, appURL string, verifyToken string) *IngestionService {
 	return &IngestionService{
-		pool:       pool,
-		parser:     parser,
-		db:         db,
-		dispatcher: dispatcher,
-		geocoder:   geocoder,
-		routing:    routingClient,
-		pricing:    pricingEngine,
-		metaClient: metaClient,
-		appURL:     appURL,
+		pool:        pool,
+		parser:      parser,
+		db:          db,
+		dispatcher:  dispatcher,
+		geocoder:    geocoder,
+		routing:     routingClient,
+		pricing:     pricingEngine,
+		metaClient:  metaClient,
+		appURL:      appURL,
+		verifyToken: verifyToken,
 	}
 }
 
 // HandleMetaWebhook captura los postbacks emitidos por Meta.
 // SOLIDBIT STANDARD: Retorna 200 OK inmediatamente (Time to Ack) y deposita el proceso pesado en RAM mediante WorkerPool.
 func (s *IngestionService) HandleMetaWebhook(w http.ResponseWriter, r *http.Request) {
+	// Verificación de Webhook por Meta (GET)
+	if r.Method == http.MethodGet {
+		mode := r.URL.Query().Get("hub.mode")
+		token := r.URL.Query().Get("hub.verify_token")
+		challenge := r.URL.Query().Get("hub.challenge")
+
+		if mode == "subscribe" && token == s.verifyToken {
+			log.Println("[WhatsApp Webhook] Verificado exitosamente por Meta.")
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(challenge))
+			return
+		}
+
+		log.Println("[WhatsApp Webhook] Fallo en la verificación del token.")
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
 	// Permitir solo métodos POST de los servidores de Meta
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)

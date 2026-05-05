@@ -18,6 +18,7 @@ type Config struct {
 	AdminPassword       string
 	WhatsAppAccessToken   string
 	WhatsAppPhoneNumberID string
+	WhatsAppVerifyToken   string
 	AdminPhone          string
 	SupportEmail        string
 	BusinessAddress     string
@@ -42,6 +43,7 @@ func LoadConfig() *Config {
 		AdminPassword:       getEnvOrPanic("ADMIN_PASSWORD"),
 		WhatsAppAccessToken:   getEnvOrPanic("WHATSAPP_ACCESS_TOKEN"),
 		WhatsAppPhoneNumberID: getEnvOrPanic("WHATSAPP_PHONE_NUMBER_ID"),
+		WhatsAppVerifyToken:   getEnvOrPanic("WHATSAPP_VERIFY_TOKEN"),
 		AdminPhone:          getEnvOrPanic("ADMIN_PHONE"),
 		SupportEmail:        getEnvOrPanic("NEXT_PUBLIC_SUPPORT_EMAIL"),
 		BusinessAddress:     getEnvOrPanic("NEXT_PUBLIC_BUSINESS_ADDRESS"),

@@ -21,6 +21,7 @@ Copia el archivo `.env.example` a uno nuevo llamado `.env` y completa los siguie
 ### 💬 WhatsApp (Meta Business)
 *   **WHATSAPP_ACCESS_TOKEN**: En [Meta for Developers](https://developers.facebook.com/), crea una App de tipo "Business", añade "WhatsApp" y obtén el Token de Acceso Permanente.
 *   **WHATSAPP_PHONE_NUMBER_ID**: Se encuentra en la configuración de WhatsApp dentro de tu App de Meta.
+*   **WHATSAPP_VERIFY_TOKEN**: Token inventado por ti (ej. `mi_token_secreto_123`) usado al configurar la URL del Webhook en Meta.
 *   **ADMIN_PHONE**: Tu número personal con código de país (ej: `521622...`) para recibir alertas críticas.
 
 ### 🛡️ Seguridad y Soporte
