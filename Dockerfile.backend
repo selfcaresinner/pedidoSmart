@@ -6,10 +6,13 @@ WORKDIR /app
 
 # Optimizar caché de módulos instalando dependencias primero
 COPY go.mod go.sum* ./
-RUN go mod download
 
 # Copiar el resto del código fuente
 COPY . .
+
+# Sincronizar y descargar dependencias
+RUN go mod tidy
+RUN go mod download
 
 # Compilar binario de Go con optimizaciones, desactivando CGO para imagen estática
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -a -installsuffix cgo -o solidbit-backend ./cmd/order-ingestion
