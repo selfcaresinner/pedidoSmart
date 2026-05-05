@@ -66,7 +66,6 @@ interface Driver {
 
 export default function DashboardPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [accessCode, setAccessCode] = useState('');
   const [orders, setOrders] = useState<Order[]>([]);
   const [driverStatus, setDriverStatus] = useState<DriverStatus>('offline');
   const [wallet, setWallet] = useState<Wallet | null>(null);
@@ -87,20 +86,12 @@ export default function DashboardPage() {
     const urlDriverId = params.get('driver_id');
     const savedCode = localStorage.getItem('solidbit_driver_auth');
     
-    if (urlDriverId || savedCode === process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
-      setTimeout(() => setIsAuthenticated(true), 0);
+    if (urlDriverId || savedCode) {
+      setIsAuthenticated(true);
+    } else {
+      window.location.href = '/';
     }
   }, []);
-
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (accessCode === process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
-      setIsAuthenticated(true);
-      localStorage.setItem('solidbit_driver_auth', accessCode);
-    } else {
-      alert("Código incorrecto");
-    }
-  };
 
   // GPS Tracking Loop
   useEffect(() => {
@@ -148,53 +139,20 @@ export default function DashboardPage() {
     try {
       setLoading(true);
 
-      // 1. Obtener el Driver ID (asociado al Auth actual)
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
+      const savedCode = localStorage.getItem('solidbit_driver_auth');
+      if (!savedCode) return;
 
-      const { data: driverData } = await supabase
-        .from('drivers')
-        .select('id, name, status')
-        .eq('user_id', user.id)
-        .single();
+      const res = await fetch(`/api/driver/init?driver_id=${savedCode}`);
+      if (!res.ok) throw new Error('Failed to fetch data');
       
-      if (!driverData) return;
-
-      // 2. Extraemos los pedidos asignados que aún están activos
-      const { data: dbOrders, error: ordersError } = await supabase
-        .from('orders')
-        .select('*')
-        .in('status', ['assigned', 'picked_up'])
-        .eq('driver_id', driverData.id)
-        .order('created_at', { ascending: false });
-
-      if (ordersError) throw ordersError;
+      const data = await res.json();
       
-      if (dbOrders) {
-        setOrders(dbOrders as Order[]);
-      }
-
-      // 3. Obtener Cartera
-      const { data: walletData } = await supabase
-        .from('driver_wallets')
-        .select('*')
-        .eq('driver_id', driverData.id)
-        .single();
+      if (data.orders) setOrders(data.orders);
+      if (data.wallet) setWallet(data.wallet);
+      setDeliveredTodayCount(data.completedToday || 0);
       
-      setWallet(walletData as Wallet);
-      setDriverStatus(driverData.status as DriverStatus);
-
-      // 4. Obtener Entregas de Hoy
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const { count: deliveredCount } = await supabase
-        .from('orders')
-        .select('*', { count: 'exact', head: true })
-        .eq('driver_id', driverData.id)
-        .eq('status', 'delivered')
-        .gte('updated_at', today.toISOString());
-        
-      setDeliveredTodayCount(deliveredCount || 0);
+      // For status, ideally we get it, default otherwise if missing
+      const driverName = localStorage.getItem('solidbit_driver_name');
 
     } catch (error) {
       console.error("[SolidBit][UI] Error fetching init data:", error);
@@ -367,31 +325,7 @@ export default function DashboardPage() {
     };
   }, [isAuthenticated]);
 
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center font-sans text-gray-900 p-4">
-        <form onSubmit={handleLogin} className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-gray-100 max-w-sm w-full">
-          <div className="flex justify-center mb-6">
-            <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
-              <Lock className="w-6 h-6" />
-            </div>
-          </div>
-          <h1 className="text-xl md:text-2xl font-bold text-center mb-2">Acceso Repartidores</h1>
-          <p className="text-gray-500 text-sm text-center mb-6">Ingresa el código de acceso general para ver tu ruta.</p>
-          <input 
-            type="password"
-            value={accessCode}
-            onChange={(e)=>setAccessCode(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            placeholder="Código de acceso"
-          />
-          <button type="submit" className="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl transition hover:bg-indigo-700">
-            Entrar
-          </button>
-        </form>
-      </div>
-    );
-  }
+  if (!isAuthenticated) return null;
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col font-sans text-gray-900 pb-20">
@@ -551,19 +485,25 @@ function OrderCard({ order, isLoadedMap, driverLocation, fullRoute, isNextStop, 
         </div>
 
         {/* Indicador de Pago */}
-        <div className="mb-4 flex flex-wrap gap-2">
+        <div className="mb-4 flex flex-col gap-2">
             {order.payment_method === 'cash' ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold bg-orange-100 text-orange-700">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold bg-orange-100 text-orange-700 w-fit">
                    💵 COBRAR EN EFECTIVO: ${order.total_amount.toFixed(2)}
                 </span>
             ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-bold bg-blue-100 text-blue-700">
-                   🏦 TRANSFERENCIA: ${order.total_amount.toFixed(2)}
-                </span>
+                <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs w-full">
+                    <span className="inline-flex items-center gap-1 font-bold text-blue-700 mb-2">
+                       🏦 TRANSFERENCIA: ${order.total_amount.toFixed(2)}
+                    </span>
+                    <div className="text-blue-800 space-y-1 font-mono">
+                      <p>A nombre de: <b>Joaquin Carpio Vallejo</b></p>
+                      <p>CLABE: <b>002769702231479665</b></p>
+                    </div>
+                </div>
             )}
 
             {order.payment_status === 'paid' && (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-100 text-emerald-700">
+                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-semibold bg-emerald-100 text-emerald-700 w-fit">
                    <CheckCircle2 className="w-3.5 h-3.5" /> Pagado
                 </span>
             )}

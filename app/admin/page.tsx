@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { motion } from 'motion/react';
 import { 
@@ -42,9 +43,19 @@ interface PerformanceDriver {
 
 export default function AdminDashboardPage() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [passInput, setPassInput] = useState("");
+  const router = useRouter();
 
   const [metrics, setMetrics] = useState<Metrics>({ total_transfers: 0, total_cash: 0, total_settled: 0, net_profit: 0, pure_profit: 0, maintenance_fund: 0, delivered_today: 0 });
+
+  // Add useRouter import and check auth on mount
+  useEffect(() => {
+    const adminCode = localStorage.getItem('solidbit_admin_auth');
+    if (!adminCode) {
+      router.push('/');
+    } else {
+      setIsAuthenticated(true);
+    }
+  }, [router]);
   const [drivers, setDrivers] = useState<PerformanceDriver[]>([]);
   const [settlements, setSettlements] = useState<Settlement[]>([]);
   const [liveMapData, setLiveMapData] = useState<{ active_orders: any[], active_drivers: any[] }>({ active_orders: [], active_drivers: [] });
@@ -55,15 +66,6 @@ export default function AdminDashboardPage() {
   const { isLoaded } = useLoadScript({
     googleMapsApiKey: process.env.NEXT_PUBLIC_MAPS_API_KEY || '',
   });
-
-  const handleLogin = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (passInput === 'SOLID2026' || passInput === process.env.NEXT_PUBLIC_ADMIN_PASSWORD) {
-      setIsAuthenticated(true);
-    } else {
-      alert("Contraseña incorrecta");
-    }
-  };
 
   const fetchInitialData = async () => {
     // Para simplificar, en lugar de llamar al backend de Go o lidiar con CORS si no corren en el mismo puerto,
@@ -145,11 +147,12 @@ export default function AdminDashboardPage() {
     
     setIsSettling(true);
     try {
+      const adminCode = localStorage.getItem('solidbit_admin_auth') || '';
       const resp = await fetch('/api/admin/settle', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-Admin-Password': passInput
+          'X-Admin-Password': adminCode
         },
         body: JSON.stringify({
           driver_id: settlingDriver.id,
@@ -172,30 +175,7 @@ export default function AdminDashboardPage() {
     }
   };
 
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center font-sans text-gray-900">
-        <form onSubmit={handleLogin} className="bg-white p-8 rounded-2xl shadow-sm border border-gray-100 max-w-sm w-full">
-          <div className="flex justify-center mb-6">
-            <div className="w-12 h-12 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-200">
-              <Building2 className="w-6 h-6" />
-            </div>
-          </div>
-          <h1 className="text-2xl font-bold text-center mb-6">SolidBit Admin</h1>
-          <input 
-            type="password"
-            value={passInput}
-            onChange={(e)=>setPassInput(e.target.value)}
-            className="w-full px-4 py-3 border border-gray-200 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-            placeholder="Contraseña Maestra"
-          />
-          <button type="submit" className="w-full bg-indigo-900 text-white font-bold py-3 rounded-xl transition hover:bg-indigo-800">
-            Ingresar a la Torre
-          </button>
-        </form>
-      </div>
-    );
-  }
+  if (!isAuthenticated) return null;
 
   const defaultCenter = { lat: 27.9678, lng: -110.8988 }; // Empalme
 
